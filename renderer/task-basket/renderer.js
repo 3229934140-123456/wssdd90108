@@ -5,6 +5,7 @@ let articles = [];
 let candidateChains = [];
 let selectedArticleIds = new Set();
 let currentView = 'edit';
+let currentChainFilter = 'all';
 
 const dropZone = document.getElementById('dropZone');
 const chainList = document.getElementById('chainList');
@@ -183,19 +184,250 @@ function setupEventListeners() {
   });
 }
 
+const FIELD_LABELS = {
+  title: ['标题', '题目', 'headline', 'title'],
+  source: ['来源', '媒体', '发布媒体', '出处', 'source', 'media'],
+  publishTime: ['发布时间', '时间', '发稿时间', '发布日期', 'date', 'time'],
+  author: ['作者', '记者', '通讯员', '撰文', '署名', '文/', 'author', 'writer'],
+  sourceNote: ['来源说明', '转载自', '引用自', '原文链接', '原文来源', 'note'],
+  url: ['链接', '网址', 'url', 'link', '原文地址']
+};
+
+function matchFieldLabel(line) {
+  const lower = line.trim().toLowerCase();
+  for (const [field, labels] of Object.entries(FIELD_LABELS)) {
+    for (const label of labels) {
+      const labelLower = label.toLowerCase();
+      if (lower.startsWith(labelLower + '：') || lower.startsWith(labelLower + ':') || lower.startsWith(labelLower + ' ')) {
+        return field;
+      }
+    }
+  }
+  return null;
+}
+
+function extractFieldValue(line, field) {
+  const labels = FIELD_LABELS[field] || [];
+  for (const label of labels) {
+    const patterns = [label + '：', label + ':', label + ' '];
+    for (const p of patterns) {
+      if (line.trim().startsWith(p)) {
+        return line.trim().substring(p.length).trim();
+      }
+      const lowerLine = line.trim().toLowerCase();
+      const lowerP = p.toLowerCase();
+      if (lowerLine.startsWith(lowerP)) {
+        return line.trim().substring(p.length).trim();
+      }
+    }
+  }
+  return null;
+}
+
+function isUrl(line) {
+  return /^https?:\/\/\S+/i.test(line.trim());
+}
+
+function extractTimeFromLine(line) {
+  const datetimePattern = /(\d{4})[-/](\d{1,2})[-/](\d{1,2})[ T]\s*(\d{1,2}):(\d{2})(:(\d{2}))?/;
+  const datePattern = /(\d{4})[-/](\d{1,2})[-/](\d{1,2})/;
+  const timePattern = /(\d{1,2}):(\d{2})(:(\d{2}))?/;
+
+  let match = line.match(datetimePattern);
+  if (match) {
+    const year = match[1];
+    const month = match[2].padStart(2, '0');
+    const day = match[3].padStart(2, '0');
+    const hour = match[4].padStart(2, '0');
+    const minute = match[5].padStart(2, '0');
+    const second = match[7] || '00';
+    return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+  }
+
+  match = line.match(datePattern);
+  if (match) {
+    const year = match[1];
+    const month = match[2].padStart(2, '0');
+    const day = match[3].padStart(2, '0');
+    return `${year}-${month}-${day} 00:00:00`;
+  }
+
+  match = line.match(timePattern);
+  if (match) {
+    const today = new Date();
+    const hour = match[1].padStart(2, '0');
+    const minute = match[2].padStart(2, '0');
+    const second = match[4] || '00';
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')} ${hour}:${minute}:${second}`;
+  }
+
+  return null;
+}
+
+function looksLikeSourceName(str) {
+  const s = str.trim();
+  if (!s || s.length > 12) return false;
+  if (s.length < 2) return false;
+  if (/[。！？!?；;]/.test(s)) return false;
+  if (/^[0-9]/.test(s)) return false;
+  if (/[\u4e00-\u9fa5]/.test(s) && s.length <= 8) return true;
+  if (s.endsWith('报') || s.endsWith('网') || s.endsWith('社') || s.endsWith('台') || s.endsWith('刊')) return true;
+  return false;
+}
+
+function looksLikeTitle(str) {
+  const s = str.trim();
+  if (!s) return false;
+  if (s.length < 6) return false;
+  if (s.length > 80) return false;
+  if (/[。；;]/.test(s)) return false;
+  if (/[！？!?]/.test(s)) return true;
+  if (/[：:].{2,}/.test(s)) return true;
+  if (/[\u4e00-\u9fa5]/.test(s)) return s.length >= 8 && s.length <= 60;
+  return false;
+}
+
+function looksLikeAuthor(str) {
+  const s = str.trim();
+  if (!s || s.length > 15) return false;
+  if (/^记者[：:]/.test(s) || /^通讯员[：:]/.test(s) || /^文[\/:]/.test(s)) return true;
+  if (/[\u4e00-\u9fa5]{2,4}$/.test(s) && s.length <= 6) return true;
+  return false;
+}
+
+function parseSingleBlock(block) {
+  const rawLines = block.split('\n').filter(l => l.trim().length > 0);
+  if (rawLines.length === 0) return null;
+
+  const article = {
+    id: 0,
+    title: '',
+    source: '',
+    publishTime: '',
+    url: '',
+    paragraphs: [],
+    images: [],
+    author: '',
+    sourceNote: '',
+    type: 'unknown',
+    similarity: 0,
+    needsEdit: true
+  };
+
+  const remaining = [];
+  let foundTime = false;
+  let foundAuthor = false;
+  let foundSource = false;
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i].trim();
+    if (!line) continue;
+
+    const field = matchFieldLabel(line);
+    if (field) {
+      const val = extractFieldValue(line, field);
+      if (val) {
+        if (field === 'publishTime') {
+          article.publishTime = extractTimeFromLine(line) || val;
+          foundTime = true;
+        } else if (field === 'paragraphs' || field === 'content') {
+          article.paragraphs.push(val);
+        } else {
+          article[field] = val;
+        }
+        if (field === 'source') foundSource = true;
+        if (field === 'author') foundAuthor = true;
+        continue;
+      }
+    }
+
+    if (isUrl(line)) {
+      article.url = line;
+      continue;
+    }
+
+    if (!foundTime) {
+      const t = extractTimeFromLine(line);
+      if (t) {
+        article.publishTime = t;
+        foundTime = true;
+        continue;
+      }
+    }
+
+    remaining.push(line);
+  }
+
+  if (remaining.length > 0) {
+    const firstLine = remaining[0];
+    const lastLine = remaining[remaining.length - 1];
+
+    if (!foundSource) {
+      if (looksLikeSourceName(firstLine)) {
+        article.source = firstLine;
+        remaining.shift();
+        foundSource = true;
+      } else if (remaining.length >= 2 && looksLikeSourceName(lastLine)) {
+        article.source = lastLine;
+        remaining.pop();
+        foundSource = true;
+      }
+    }
+
+    if (!foundAuthor && remaining.length > 0) {
+      const last = remaining[remaining.length - 1];
+      if (looksLikeAuthor(last) && !looksLikeTitle(last)) {
+        article.author = last;
+        remaining.pop();
+        foundAuthor = true;
+      } else if (remaining.length >= 2 && looksLikeAuthor(remaining[remaining.length - 2])) {
+        article.author = remaining[remaining.length - 2];
+        remaining.splice(remaining.length - 2, 1);
+        foundAuthor = true;
+      }
+    }
+
+    if (!article.title && remaining.length > 0) {
+      if (looksLikeTitle(remaining[0])) {
+        article.title = remaining[0];
+        remaining.shift();
+      } else if (remaining.length > 0) {
+        article.title = remaining[0];
+        remaining.shift();
+      }
+    }
+
+    if (remaining.length > 0) {
+      article.paragraphs = article.paragraphs.concat(remaining.filter(l => l && l.length > 0));
+    }
+  }
+
+  article.needsEdit = !article.title || !article.publishTime;
+  return article;
+}
+
 function parseBatchImport(text) {
-  const lines = text.split('\n');
   const newArticles = [];
-  
-  if (text.includes('|')) {
+  const trimmedText = text.trim();
+
+  if (trimmedText.includes('|') && /^[^|]*\|/.test(trimmedText.split('\n')[0])) {
+    const lines = trimmedText.split('\n');
     lines.forEach(line => {
       line = line.trim();
       if (!line) return;
+      if (!line.includes('|')) {
+        const parsed = parseSingleBlock(line);
+        if (parsed) {
+          parsed.id = Date.now() + newArticles.length + Math.random();
+          newArticles.push(parsed);
+        }
+        return;
+      }
       const parts = line.split('|');
       const [url, title, source, publishTime, ...contentParts] = parts;
       const contentStr = contentParts.join('|');
       const paragraphs = contentStr ? contentStr.split('||').filter(p => p.trim()) : [];
-      
+
       newArticles.push({
         id: Date.now() + newArticles.length + Math.random(),
         title: (title || '').trim(),
@@ -212,67 +444,37 @@ function parseBatchImport(text) {
       });
     });
   } else {
-    const blocks = text.split(/\n\s*\n/).filter(b => b.trim());
+    let blocks = [];
+    if (trimmedText.includes('\n\n') || trimmedText.includes('\n \n')) {
+      blocks = trimmedText.split(/\n\s*\n/).filter(b => b.trim());
+    } else {
+      blocks = [trimmedText];
+    }
+
     blocks.forEach(block => {
-      const blockLines = block.split('\n').filter(l => l.trim());
-      if (blockLines.length === 0) return;
-      
-      let url = '';
-      let title = '';
-      let source = '';
-      let publishTime = '';
-      let paragraphs = [];
-      
-      const urlLine = blockLines.find(l => l.startsWith('http'));
-      if (urlLine) {
-        url = urlLine.trim();
-        blockLines.splice(blockLines.indexOf(urlLine), 1);
+      const parsed = parseSingleBlock(block);
+      if (parsed) {
+        parsed.id = Date.now() + newArticles.length + Math.random();
+        newArticles.push(parsed);
       }
-      
-      const timeLine = blockLines.find(l => /\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(l) || /\d{1,2}:\d{2}(:\d{2})?/.test(l));
-      if (timeLine) {
-        const timeMatch = timeLine.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2})?)|(\d{1,2}:\d{2}(:\d{2})?)/);
-        if (timeMatch) {
-          publishTime = timeMatch[0].replace(/\//g, '-').replace('T', ' ').trim();
-          if (!publishTime.includes('-')) {
-            const today = new Date();
-            publishTime = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')} ${publishTime}`;
-          }
-        }
-        blockLines.splice(blockLines.indexOf(timeLine), 1);
-      }
-      
-      if (blockLines.length > 0) {
-        title = blockLines[0].trim();
-        paragraphs = blockLines.slice(1).map(l => l.trim()).filter(l => l);
-      }
-      
-      newArticles.push({
-        id: Date.now() + newArticles.length + Math.random(),
-        title: title,
-        source: source,
-        publishTime: publishTime,
-        url: url,
-        paragraphs: paragraphs,
-        images: [],
-        author: '',
-        sourceNote: '',
-        type: 'unknown',
-        similarity: 0,
-        needsEdit: !(title && publishTime)
-      });
     });
   }
-  
-  newArticles.forEach(a => {
-    if (a.url && articles.find(ex => ex.url === a.url)) return;
-    articles.push(a);
+
+  const validArticles = newArticles.filter(a => a && (a.title || a.source || a.paragraphs.length > 0));
+  let addedCount = 0;
+  validArticles.forEach(a => {
+    const exists = articles.find(ex => ex.url && a.url && ex.url === a.url);
+    if (!exists) {
+      articles.push(a);
+      addedCount++;
+    }
   });
-  
+
   candidateChains = buildCandidateChains(articles);
   renderChains();
   updateMissingWarning();
   updateTaskData();
+  return addedCount;
 }
 
 function addUrls(urls) {
@@ -340,11 +542,16 @@ function renderEditView() {
     if (!article.publishTime) missingFields.push('发布时间');
     const hasMissing = missingFields.length > 0;
     const borderClass = hasMissing ? 'border-color: #eb3349;' : 'border-color: #2d2d4a;';
-    
+
     html += `
       <div class="article-item" data-article-id="${article.id}" style="${borderClass} cursor: default;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span style="font-size: 11px; color: #7c7c9a; word-break: break-all; flex: 1;">${article.url || '(无链接)'}</span>
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
+            <span style="font-size: 12px; font-weight: 600; color: #4ecca3; padding: 2px 8px; background: rgba(78, 204, 163, 0.15); border-radius: 4px; flex-shrink: 0;">
+              ${article.source || '未知来源'}
+            </span>
+            <span style="font-size: 11px; color: #7c7c9a; word-break: break-all; flex: 1; min-width: 0;">${article.url || '(无链接)'}</span>
+          </div>
           <button class="btn btn-danger btn-small delete-btn" data-article-id="${article.id}" style="flex-shrink: 0; margin-left: 8px;">删除</button>
         </div>
         ${hasMissing ? `<div style="color: #eb3349; font-size: 11px; margin-bottom: 8px;">⚠ 缺少：${missingFields.join('、')}</div>` : ''}
@@ -419,41 +626,167 @@ function renderEditView() {
   });
 }
 
+function getFilteredChains() {
+  const chains = candidateChains;
+  if (currentChainFilter === 'all') return chains;
+
+  if (currentChainFilter === 'earliest') {
+    const sorted = [...chains].sort((a, b) => {
+      const ta = new Date(a.source.publishTime).getTime();
+      const tb = new Date(b.source.publishTime).getTime();
+      return ta - tb;
+    });
+    return sorted.slice(0, 3);
+  }
+
+  if (currentChainFilter === 'highest') {
+    const sorted = [...chains].sort((a, b) => b.totalSimilarity - a.totalSimilarity);
+    return sorted.slice(0, 3);
+  }
+
+  if (currentChainFilter === 'samesource') {
+    const sourceMap = {};
+    chains.forEach(c => {
+      const s = c.source.source || '未知';
+      if (!sourceMap[s]) sourceMap[s] = [];
+      sourceMap[s].push(c);
+    });
+    const multiSourceChains = [];
+    Object.values(sourceMap).forEach(arr => {
+      if (arr.length >= 2) {
+        multiSourceChains.push(...arr);
+      }
+    });
+    if (multiSourceChains.length > 0) return multiSourceChains;
+    return chains.filter(c => c.reprints.length >= 2).slice(0, 3);
+  }
+
+  if (currentChainFilter === 'missing') {
+    return chains.filter(c => {
+      const srcMissing = !c.source.title || !c.source.publishTime;
+      const reprintMissing = c.reprints.some(r => !r.article.title || !r.article.publishTime);
+      return srcMissing || reprintMissing;
+    });
+  }
+
+  return chains;
+}
+
+function openChainCompare(sourceArticle, reprintArticle) {
+  const sorted = [sourceArticle, reprintArticle].sort((a, b) =>
+    new Date(a.publishTime) - new Date(b.publishTime)
+  );
+  ipcRenderer.invoke('open-compare-articles', sorted);
+}
+
 function renderChainView() {
-  let html = '';
-  
-  candidateChains.forEach((chain, idx) => {
+  const filters = [
+    { key: 'all', label: '全部链路' },
+    { key: 'earliest', label: '最早发布' },
+    { key: 'highest', label: '最高相似度' },
+    { key: 'samesource', label: '同源媒体' },
+    { key: 'missing', label: '缺字段' }
+  ];
+
+  let filterHtml = `<div class="chain-filter-bar" style="display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap;">`;
+  filters.forEach(f => {
+    const active = currentChainFilter === f.key
+      ? 'background: #667eea; color: #fff; border-color: #667eea;'
+      : 'background: #16162a; color: #9fa8da; border-color: #2d2d4a;';
+    filterHtml += `
+      <span class="chain-filter-btn" data-filter="${f.key}"
+            style="padding: 5px 10px; font-size: 11px; border: 1px solid; border-radius: 6px; cursor: pointer; transition: all 0.2s; ${active}">
+        ${f.label}
+      </span>
+    `;
+  });
+  filterHtml += `</div>`;
+
+  const filteredChains = getFilteredChains();
+  let html = filterHtml;
+
+  if (filteredChains.length === 0) {
+    html += `<div style="text-align: center; padding: 30px 0; color: #5c5c7a; font-size: 12px;">
+      该筛选条件下没有匹配的链路
+    </div>`;
+    chainList.innerHTML = html;
+    bindChainFilterEvents();
+    return;
+  }
+
+  filteredChains.forEach((chain, idx) => {
     const source = chain.source;
-    
+    const srcMissing = !source.title || !source.publishTime;
+
     html += `
-      <div class="chain-group" data-source-id="${source.id}">
-        <div class="chain-source">
+      <div class="chain-group" data-source-id="${source.id}" style="margin-bottom: 12px;">
+        <div class="chain-source" style="position: relative; padding-right: 80px;">
           <span class="label">源头</span>
           <span class="title">${source.title || '(未填写标题)'}</span>
           <span style="font-size: 11px; color: #7c7c9a;">${source.source || '?'} · ${formatTime(source.publishTime)}</span>
+          ${srcMissing ? '<span style="font-size:10px;color:#ef5350;margin-left:6px;">缺字段</span>' : ''}
+          <button class="chain-source-compare-btn" data-source-id="${source.id}"
+                  style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+                         padding: 3px 8px; font-size: 10px; background: #2d2d4a; color: #e0e0e0;
+                         border: 1px solid #3d3d5c; border-radius: 4px; cursor: pointer;">
+            对照
+          </button>
         </div>
     `;
-    
+
+    if (chain.reprints.length === 0) {
+      html += `
+        <div style="padding: 8px 14px 8px 36px; font-size: 11px; color: #5c5c7a;">
+          暂无相似转载稿件
+        </div>
+      `;
+    }
+
     chain.reprints.forEach(reprint => {
       const rArticle = reprint.article;
       const rSelected = selectedArticleIds.has(rArticle.id);
-      
+      const rMissing = !rArticle.title || !rArticle.publishTime;
+
       html += `
-        <div class="chain-reprint ${rSelected ? 'selected' : ''}" data-article-id="${rArticle.id}" style="cursor: pointer;">
+        <div class="chain-reprint ${rSelected ? 'selected' : ''}" data-article-id="${rArticle.id}"
+             style="cursor: pointer; position: relative; padding-right: 60px;">
           <span class="title">${rArticle.title || '(未填写标题)'}</span>
           <span class="sim">${reprint.similarity}%</span>
           <span class="time">+${Math.round(reprint.timeDiff)}分钟</span>
+          ${rMissing ? '<span class="time" style="color:#ef5350;">缺字段</span>' : ''}
+          <button class="chain-reprint-compare-btn" data-source-id="${source.id}" data-reprint-id="${rArticle.id}"
+                  style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+                         padding: 2px 7px; font-size: 10px; background: rgba(102, 126, 234, 0.15); color: #667eea;
+                         border: 1px solid rgba(102, 126, 234, 0.3); border-radius: 4px; cursor: pointer;">
+            对照
+          </button>
         </div>
       `;
     });
-    
+
     html += `</div>`;
   });
-  
+
   chainList.innerHTML = html;
-  
+
+  bindChainFilterEvents();
+  bindChainReprintEvents();
+  bindChainCompareEvents();
+}
+
+function bindChainFilterEvents() {
+  chainList.querySelectorAll('.chain-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentChainFilter = btn.dataset.filter;
+      renderChains();
+    });
+  });
+}
+
+function bindChainReprintEvents() {
   chainList.querySelectorAll('.chain-reprint').forEach(el => {
     el.addEventListener('click', (e) => {
+      if (e.target.closest('.chain-reprint-compare-btn')) return;
       const id = parseFloat(el.dataset.articleId);
       if (selectedArticleIds.has(id)) {
         selectedArticleIds.delete(id);
@@ -463,6 +796,33 @@ function renderChainView() {
         el.style.background = 'rgba(78, 204, 163, 0.08)';
       }
       updateButtons();
+    });
+  });
+}
+
+function bindChainCompareEvents() {
+  chainList.querySelectorAll('.chain-reprint-compare-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const srcId = parseFloat(btn.dataset.sourceId);
+      const rpId = parseFloat(btn.dataset.reprintId);
+      const srcArticle = articles.find(a => a.id === srcId);
+      const rpArticle = articles.find(a => a.id === rpId);
+      if (srcArticle && rpArticle) {
+        openChainCompare(srcArticle, rpArticle);
+      }
+    });
+  });
+
+  chainList.querySelectorAll('.chain-source-compare-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const srcId = parseFloat(btn.dataset.sourceId);
+      const srcArticle = articles.find(a => a.id === srcId);
+      const chain = candidateChains.find(c => c.source.id === srcId);
+      if (srcArticle && chain && chain.reprints.length > 0) {
+        openChainCompare(srcArticle, chain.reprints[0].article);
+      }
     });
   });
 }

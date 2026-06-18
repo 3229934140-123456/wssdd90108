@@ -346,15 +346,25 @@ function detectImageChange(images1, images2) {
 
 function generatePropagationPath(taskData) {
   const { articles, conclusions } = taskData;
-  const { source, keyMedia, uncertainNodes } = conclusions || {};
+  const { source, keyMedia, uncertainNodes, timelineOrder, manuallyAdjustedIds } = conclusions || {};
   const keyMediaIds = new Set((keyMedia || []).map(a => a.id));
   const uncertainIds = new Set((uncertainNodes || []).map(a => a.id));
+  const adjustedIds = new Set(manuallyAdjustedIds || []);
 
-  const sorted = [...(articles || [])].sort((a, b) => {
-    const t1 = a.publishTime ? new Date(a.publishTime).getTime() : Infinity;
-    const t2 = b.publishTime ? new Date(b.publishTime).getTime() : Infinity;
-    return t1 - t2;
-  });
+  let sorted = [];
+  if (timelineOrder && timelineOrder.length === (articles || []).length) {
+    const idMap = new Map((articles || []).map(a => [a.id, a]));
+    timelineOrder.forEach(id => {
+      if (idMap.has(id)) sorted.push(idMap.get(id));
+    });
+  }
+  if (sorted.length !== (articles || []).length) {
+    sorted = [...(articles || [])].sort((a, b) => {
+      const t1 = a.publishTime ? new Date(a.publishTime).getTime() : Infinity;
+      const t2 = b.publishTime ? new Date(b.publishTime).getTime() : Infinity;
+      return t1 - t2;
+    });
+  }
 
   if (sorted.length === 0) return '（暂无可分析稿件）';
 
@@ -393,6 +403,12 @@ function generatePropagationPath(taskData) {
   const overallDur = calcDuration(sorted[0], sorted[sorted.length - 1]);
   if (overallDur) {
     pathParts.push(`整体传播时长约${overallDur}`);
+  }
+
+  const adjustedInPath = sorted.filter(a => adjustedIds.has(a.id));
+  if (adjustedInPath.length > 0) {
+    const names = adjustedInPath.map(a => `《${a.source}》`).join('、');
+    pathParts.push(`【注：${names} 位置为人工调整】`);
   }
 
   return pathParts.join('，') + '。';

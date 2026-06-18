@@ -6,6 +6,9 @@ let selectedSourceId = null;
 let selectedKeyMediaIds = new Set();
 let selectedUncertainIds = new Set();
 let taskData = null;
+let timelineOrder = [];
+let manuallyAdjustedIds = new Set();
+let dragSourceId = null;
 
 const sourceList = document.getElementById('sourceList');
 const keyMediaList = document.getElementById('keyMediaList');
@@ -51,17 +54,45 @@ function formatFullTime(timeStr) {
   return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+function getTimelineSortedArticles() {
+  if (!articles || articles.length === 0) return [];
+
+  if (timelineOrder.length === articles.length) {
+    const ordered = [];
+    const idMap = new Map(articles.map(a => [a.id, a]));
+    timelineOrder.forEach(id => {
+      if (idMap.has(id)) ordered.push(idMap.get(id));
+    });
+    if (ordered.length === articles.length) return ordered;
+  }
+
+  return [...articles].sort((a, b) => {
+    const t1 = a.publishTime ? new Date(a.publishTime).getTime() : Infinity;
+    const t2 = b.publishTime ? new Date(b.publishTime).getTime() : Infinity;
+    return t1 - t2;
+  });
+}
+
+function initTimelineOrder() {
+  if (!articles || articles.length === 0) {
+    timelineOrder = [];
+    return;
+  }
+  const sorted = [...articles].sort((a, b) => {
+    const t1 = a.publishTime ? new Date(a.publishTime).getTime() : Infinity;
+    const t2 = b.publishTime ? new Date(b.publishTime).getTime() : Infinity;
+    return t1 - t2;
+  });
+  timelineOrder = sorted.map(a => a.id);
+}
+
 function renderTimeline() {
   if (!articles || articles.length === 0) {
     timelineContainer.innerHTML = '<span style="color: #5c5c7a; font-size: 12px; display: block; padding: 20px; text-align: center;">暂无稿件数据</span>';
     return;
   }
 
-  const sorted = [...articles].sort((a, b) => {
-    const t1 = a.publishTime ? new Date(a.publishTime).getTime() : Infinity;
-    const t2 = b.publishTime ? new Date(b.publishTime).getTime() : Infinity;
-    return t1 - t2;
-  });
+  const sorted = getTimelineSortedArticles();
 
   const typeLabelMap = {
     source: '源头',
@@ -77,7 +108,7 @@ function renderTimeline() {
   };
 
   let html = '';
-  sorted.forEach(article => {
+  sorted.forEach((article, idx) => {
     const nType = getNodeType(article.id);
     const typeClass = nType !== 'normal' ? `${nType}-type` : '';
     const typeLabel = typeLabelMap[nType];
@@ -90,14 +121,19 @@ function renderTimeline() {
     const missingBadge = missingFields.length > 0
       ? `<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(239,83,80,0.2);color:#ef5350;">${missingFields.join('/')}</span>`
       : '';
+    const isManualAdjusted = manuallyAdjustedIds.has(article.id);
+    const manualBadge = isManualAdjusted
+      ? `<span style="margin-left:6px;font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(255,152,0,0.2);color:#ff9800;">手动调整</span>`
+      : '';
 
     html += `
-      <div class="timeline-node ${typeClass}" data-id="${article.id}">
+      <div class="timeline-node ${typeClass}" data-id="${article.id}" draggable="true"
+           style="${isManualAdjusted ? 'border-left: 3px solid #ff9800;' : ''}">
         <div class="timeline-dot">${dotMark}</div>
         <div class="tl-info">
           <div class="tl-main">
             <div class="tl-source">
-              ${article.source || '未知来源'}${missingBadge}
+              ${article.source || '未知来源'}${missingBadge}${manualBadge}
             </div>
             <div class="tl-title" title="${article.title || ''}">${titleShort}</div>
           </div>
@@ -108,6 +144,8 @@ function renderTimeline() {
         </div>
         <div class="timeline-cycle-menu">
           <button class="cycle-btn" data-action="cycle" title="循环切换类型">◉</button>
+          <button class="cycle-btn" data-action="moveup" title="上移">↑</button>
+          <button class="cycle-btn" data-action="movedown" title="下移">↓</button>
         </div>
       </div>
     `;
@@ -118,6 +156,9 @@ function renderTimeline() {
   timelineContainer.querySelectorAll('.timeline-node').forEach(node => {
     const id = parseFloat(node.dataset.id);
     const cycleBtn = node.querySelector('[data-action="cycle"]');
+    const upBtn = node.querySelector('[data-action="moveup"]');
+    const downBtn = node.querySelector('[data-action="movedown"]');
+
     cycleBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       cycleNodeType(id);
@@ -125,13 +166,104 @@ function renderTimeline() {
       renderArticleLists();
       updateReport();
     });
+
+    upBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      moveTimelineNode(id, -1);
+    });
+
+    downBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      moveTimelineNode(id, 1);
+    });
+
     node.addEventListener('click', () => {
       cycleNodeType(id);
       renderTimeline();
       renderArticleLists();
       updateReport();
     });
+
+    node.addEventListener('dragstart', (e) => {
+      dragSourceId = id;
+      node.style.opacity = '0.5';
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    node.addEventListener('dragend', () => {
+      node.style.opacity = '1';
+      dragSourceId = null;
+      timelineContainer.querySelectorAll('.timeline-node').forEach(n => {
+        n.style.borderTop = '';
+        n.style.borderBottom = '';
+      });
+    });
+
+    node.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+
+    node.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      if (dragSourceId === null || dragSourceId === id) return;
+      const srcIdx = timelineOrder.indexOf(dragSourceId);
+      const tgtIdx = timelineOrder.indexOf(id);
+      if (srcIdx < tgtIdx) {
+        node.style.borderBottom = '2px dashed #667eea';
+      } else {
+        node.style.borderTop = '2px dashed #667eea';
+      }
+    });
+
+    node.addEventListener('dragleave', () => {
+      node.style.borderTop = '';
+      node.style.borderBottom = '';
+    });
+
+    node.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (dragSourceId === null || dragSourceId === id) return;
+      reorderTimeline(dragSourceId, id);
+    });
   });
+}
+
+function moveTimelineNode(id, direction) {
+  if (timelineOrder.length === 0) initTimelineOrder();
+  const idx = timelineOrder.indexOf(id);
+  if (idx < 0) return;
+  const newIdx = idx + direction;
+  if (newIdx < 0 || newIdx >= timelineOrder.length) return;
+
+  timelineOrder.splice(idx, 1);
+  timelineOrder.splice(newIdx, 0, id);
+
+  manuallyAdjustedIds.add(id);
+
+  renderTimeline();
+  renderArticleLists();
+  updateReport();
+}
+
+function reorderTimeline(dragId, targetId) {
+  if (timelineOrder.length === 0) initTimelineOrder();
+
+  const dragIdx = timelineOrder.indexOf(dragId);
+  const targetIdx = timelineOrder.indexOf(targetId);
+  if (dragIdx < 0 || targetIdx < 0 || dragIdx === targetIdx) return;
+
+  timelineOrder.splice(dragIdx, 1);
+
+  const newTargetIdx = dragIdx < targetIdx ? targetIdx - 1 : targetIdx;
+  timelineOrder.splice(newTargetIdx, 0, dragId);
+
+  manuallyAdjustedIds.add(dragId);
+
+  renderTimeline();
+  renderArticleLists();
+  updateReport();
 }
 
 function init() {
@@ -165,6 +297,9 @@ function setupEventListeners() {
     selectedKeyMediaIds.clear();
     selectedUncertainIds.clear();
     judgmentInput.value = '';
+    timelineOrder = [];
+    manuallyAdjustedIds.clear();
+    if (articles.length > 0) initTimelineOrder();
     renderTimeline();
     renderArticleLists();
     updateReport();
@@ -179,7 +314,9 @@ function setupEventListeners() {
       source: source || null,
       keyMedia: keyMedia,
       uncertainNodes: uncertain,
-      manualJudgment: judgmentInput.value
+      manualJudgment: judgmentInput.value,
+      timelineOrder: [...timelineOrder],
+      manuallyAdjustedIds: [...manuallyAdjustedIds]
     };
 
     ipcRenderer.invoke('update-task-data', { conclusions: conclusionData });
@@ -213,6 +350,16 @@ function loadTaskData() {
         if (data.conclusions.manualJudgment) {
           judgmentInput.value = data.conclusions.manualJudgment;
         }
+        if (data.conclusions.timelineOrder) {
+          timelineOrder = data.conclusions.timelineOrder;
+        }
+        if (data.conclusions.manuallyAdjustedIds) {
+          manuallyAdjustedIds = new Set(data.conclusions.manuallyAdjustedIds);
+        }
+      }
+
+      if (timelineOrder.length === 0) {
+        initTimelineOrder();
       }
 
       renderTimeline();
@@ -328,7 +475,9 @@ function updateReport() {
       source: source,
       keyMedia: keyMedia,
       uncertainNodes: uncertain,
-      manualJudgment: judgmentInput.value
+      manualJudgment: judgmentInput.value,
+      timelineOrder: [...timelineOrder],
+      manuallyAdjustedIds: [...manuallyAdjustedIds]
     }
   };
 
@@ -369,6 +518,15 @@ ipcRenderer.on('load-conclusion', (event, data) => {
   }
   if (data?.conclusions?.manualJudgment) {
     judgmentInput.value = data.conclusions.manualJudgment;
+  }
+  if (data?.conclusions?.timelineOrder) {
+    timelineOrder = [...data.conclusions.timelineOrder];
+  }
+  if (data?.conclusions?.manuallyAdjustedIds) {
+    manuallyAdjustedIds = new Set(data.conclusions.manuallyAdjustedIds);
+  }
+  if (timelineOrder.length === 0 && articles.length > 0) {
+    initTimelineOrder();
   }
   renderTimeline();
   renderArticleLists();

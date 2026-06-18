@@ -30,7 +30,7 @@
         <button class="btn btn-secondary btn-small" id="toggleBatchBtn">展开</button>
       </div>
       <div id="batchArea" style="display: none;">
-        <textarea class="batch-textarea" id="batchInput" rows="5" placeholder="每行一条稿件，用「|」分隔字段：&#10;URL|标题|来源|2026-06-19 14:30:00|正文第一段||正文第二段||正文第三段&#10;也可单独粘贴标题、正文内容，系统会按空行切分每篇"></textarea>
+        <textarea class="batch-textarea" id="batchInput" rows="6" placeholder="支持多种粘贴格式，自动识别字段：&#10;&#10;【格式1】带标签前缀（推荐）&#10;标题：某科技公司大规模裁员&#10;来源：科技日报&#10;时间：2026-06-19 14:30&#10;作者：张三&#10;正文：今日，某知名科技公司宣布...&#10;&#10;【格式2】空行分多篇，自动识别标题/来源/时间/正文&#10;科技日报&#10;某科技公司宣布大规模裁员&#10;2026-06-19 14:30:00&#10;今日，某知名科技公司宣布...&#10;&#10;【格式3】| 分隔结构化&#10;URL|标题|来源|时间|正文段1||正文段2"></textarea>
         <div style="margin-top: 8px; display: flex; gap: 8px;">
           <button class="btn btn-primary btn-small" id="parseBatchBtn">解析导入</button>
           <button class="btn btn-secondary btn-small" id="pasteBatchBtn">粘贴剪贴板</button>

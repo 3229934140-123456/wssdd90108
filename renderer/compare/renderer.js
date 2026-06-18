@@ -29,6 +29,11 @@ const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const markSourceBtn = document.getElementById('markSourceBtn');
 const toConclusionBtn = document.getElementById('toConclusionBtn');
+const sameEvidence = document.getElementById('sameEvidence');
+const modifiedEvidence = document.getElementById('modifiedEvidence');
+const quoteEvidence = document.getElementById('quoteEvidence');
+const sameCount = document.getElementById('sameCount');
+const modifiedCount = document.getElementById('modifiedCount');
 
 function init() {
   setupEventListeners();
@@ -196,6 +201,7 @@ function updateComparison() {
   reprintType.style = typeClass;
 
   renderDiffContent(diff);
+  renderEvidence(diff);
 }
 
 function extractSourceContext(article) {
@@ -254,6 +260,99 @@ function decoratePara(content, paraTagList) {
   if (!paraTagList || paraTagList.length === 0) return content;
   const tagHtml = paraTagList.map(t => `<span class="para-source-tag ${t.type}">${t.label}${t.name}</span>`).join('');
   return content + tagHtml;
+}
+
+function renderEvidence(diff) {
+  sameCount.textContent = diff.paragraphs.same.length;
+  modifiedCount.textContent = diff.paragraphs.modified.length;
+
+  const maxShow = 3;
+
+  if (diff.paragraphs.same.length === 0) {
+    sameEvidence.innerHTML = '<span style="color: #5c5c7a;">暂无相同段落</span>';
+  } else {
+    const items = diff.paragraphs.same.slice(0, maxShow);
+    sameEvidence.innerHTML = items.map((item, i) => `
+      <div class="evidence-item" style="padding: 6px 8px; margin-bottom: 4px; background: rgba(78, 204, 163, 0.08); border-radius: 4px; border-left: 2px solid #4ecca3;">
+        <span style="color: #4ecca3; font-size: 10px; font-weight: 600;">第${item.index + 1}段</span>
+        <div style="color: #b0b0c0; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+          ${item.content1.substring(0, 120)}${item.content1.length > 120 ? '...' : ''}
+        </div>
+      </div>
+    `).join('') + (diff.paragraphs.same.length > maxShow
+      ? `<div style="font-size: 10px; color: #5c5c7a; margin-top: 4px;">还有 ${diff.paragraphs.same.length - maxShow} 段...</div>`
+      : '');
+  }
+
+  if (diff.paragraphs.modified.length === 0) {
+    modifiedEvidence.innerHTML = '<span style="color: #5c5c7a;">暂无改写段落</span>';
+  } else {
+    const items = diff.paragraphs.modified.slice(0, maxShow);
+    modifiedEvidence.innerHTML = items.map((item, i) => `
+      <div class="evidence-item" style="padding: 6px 8px; margin-bottom: 6px; background: rgba(255, 193, 7, 0.08); border-radius: 4px; border-left: 2px solid #ffc107;">
+        <span style="color: #ffc107; font-size: 10px; font-weight: 600;">第${item.index + 1}段（相似度 ${item.similarity}%）</span>
+        <div style="color: #b0b0c0; margin-top: 2px; font-size: 11px;">
+          <div style="color: #7c7c9a; font-size: 10px;">左：${item.content1.substring(0, 60)}${item.content1.length > 60 ? '...' : ''}</div>
+          <div style="color: #e0e0e0; font-size: 10px; margin-top: 2px;">右：${item.content2.substring(0, 60)}${item.content2.length > 60 ? '...' : ''}</div>
+        </div>
+      </div>
+    `).join('') + (diff.paragraphs.modified.length > maxShow
+      ? `<div style="font-size: 10px; color: #5c5c7a; margin-top: 4px;">还有 ${diff.paragraphs.modified.length - maxShow} 段...</div>`
+      : '');
+  }
+
+  const leftQuotes = extractQuoteSentences(leftArticle);
+  const rightQuotes = extractQuoteSentences(rightArticle);
+
+  if (leftQuotes.length === 0 && rightQuotes.length === 0) {
+    quoteEvidence.innerHTML = '<span style="color: #5c5c7a;">未检测到明确来源引用</span>';
+  } else {
+    const maxQuoteShow = 3;
+    const allQuotes = [];
+
+    leftQuotes.slice(0, maxQuoteShow).forEach(q => {
+      allQuotes.push({ side: 'left', text: q });
+    });
+    rightQuotes.slice(0, maxQuoteShow).forEach(q => {
+      allQuotes.push({ side: 'right', text: q });
+    });
+
+    quoteEvidence.innerHTML = allQuotes.map(q => `
+      <div class="evidence-item" style="padding: 5px 8px; margin-bottom: 4px; background: rgba(102, 126, 234, 0.08); border-radius: 4px; border-left: 2px solid #667eea;">
+        <span style="color: #667eea; font-size: 10px; font-weight: 600;">${q.side === 'left' ? '左稿' : '右稿'}</span>
+        <span style="color: #b0b0c0; font-size: 11px; margin-left: 6px;">${q.text}</span>
+      </div>
+    `).join('');
+  }
+}
+
+function extractQuoteSentences(article) {
+  const quotes = [];
+  const quotePatterns = [
+    /[^。；;\n]*转载自[：: ]*[^\s，,。；;]+[^。；;\n]*[。；;\n]?/g,
+    /[^。；;\n]*引用自[：: ]*[^\s，,。；;]+[^。；;\n]*[。；;\n]?/g,
+    /[^。；;\n]*来源[：: ]*[^\s，,。；;]+[^。；;\n]*[。；;\n]?/g,
+    /[^。；;\n]*[据从][ ]*[^\s，,。；;]+[ ]*(报道|消息|获悉)[^。；;\n]*[。；;\n]?/g,
+    /[^。；;\n]*[^\s，,。；;]+[ ]*(讯|报道称)[^。；;\n]*[。；;\n]?/g
+  ];
+
+  const fullText = (article.paragraphs || []).join('\n') + (article.sourceNote ? '\n' + article.sourceNote : '');
+
+  quotePatterns.forEach(pat => {
+    const matches = fullText.match(pat);
+    if (matches) {
+      matches.forEach(m => {
+        const clean = m.trim();
+        if (clean.length > 6 && clean.length < 120) {
+          if (!quotes.find(q => q === clean)) {
+            quotes.push(clean);
+          }
+        }
+      });
+    }
+  });
+
+  return quotes;
 }
 
 function renderDiffContent(diff) {
