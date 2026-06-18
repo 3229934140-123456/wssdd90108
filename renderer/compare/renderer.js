@@ -21,6 +21,7 @@ const sameNum = document.getElementById('sameNum');
 const diffNum = document.getElementById('diffNum');
 const addNum = document.getElementById('addNum');
 const titleDiff = document.getElementById('titleDiff');
+const sourceDiff = document.getElementById('sourceDiff');
 const imageDiff = document.getElementById('imageDiff');
 const timeDiff = document.getElementById('timeDiff');
 const reprintType = document.getElementById('reprintType');
@@ -151,8 +152,8 @@ function loadPair(index) {
 function updateComparison() {
   if (!leftArticle || !rightArticle) return;
 
-  leftTitle.textContent = leftArticle.source;
-  rightTitle.textContent = rightArticle.source;
+  leftTitle.textContent = leftArticle.source || '未知来源';
+  rightTitle.textContent = rightArticle.source || '未知来源';
   leftTime.textContent = formatTime(leftArticle.publishTime);
   rightTime.textContent = formatTime(rightArticle.publishTime);
 
@@ -165,6 +166,8 @@ function updateComparison() {
   addNum.textContent = diff.paragraphs.added.length + '/' + diff.paragraphs.removed.length;
 
   titleDiff.textContent = diff.title.changeType;
+  sourceDiff.textContent = diff.source.changeType;
+  sourceDiff.style = getSourceDiffStyle(diff.source.changeType);
   imageDiff.textContent = diff.images.change;
   
   const t1 = new Date(leftArticle.publishTime);
@@ -245,8 +248,18 @@ function highlightDiff(text1, text2, side) {
 }
 
 function formatTime(timeStr) {
+  if (!timeStr) return '未知';
   const date = new Date(timeStr);
+  if (isNaN(date.getTime())) return timeStr;
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function getSourceDiffStyle(changeType) {
+  if (changeType.includes('被删除')) return 'color: #ef5350;';
+  if (changeType.includes('替换') || changeType.includes('微调') || changeType.includes('变更')) return 'color: #ffc107;';
+  if (changeType.includes('保留')) return 'color: #4ecca3;';
+  if (changeType.includes('新增')) return 'color: #667eea;';
+  return '';
 }
 
 ipcRenderer.on('compare-articles', (event, selectedArticles) => {

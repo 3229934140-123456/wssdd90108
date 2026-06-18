@@ -4,11 +4,11 @@ const { generateMockArticles, buildCandidateChains, calculateSimilarity } = requ
 let articles = [];
 let candidateChains = [];
 let selectedArticleIds = new Set();
-let currentView = 'chains';
+let currentView = 'edit';
 
 const dropZone = document.getElementById('dropZone');
 const chainList = document.getElementById('chainList');
-const chainCount = document.getElementById('chainCount');
+const articleCount = document.getElementById('articleCount');
 const compareBtn = document.getElementById('compareBtn');
 const generateBtn = document.getElementById('generateBtn');
 const clientNameInput = document.getElementById('clientName');
@@ -109,12 +109,21 @@ function setupEventListeners() {
   });
 
   generateBtn.addEventListener('click', () => {
-    ipcRenderer.invoke('focus-window', 'conclusion');
-    ipcRenderer.invoke('generate-conclusion', {
-      source: null,
-      keyMedia: [],
-      uncertainNodes: [],
-      manualJudgment: ''
+    candidateChains = buildCandidateChains(articles);
+    const taskData = {
+      clientName: clientNameInput.value,
+      keywords: keywordsInput.value,
+      articles: articles,
+      candidateChains: candidateChains,
+      conclusions: {
+        source: null,
+        keyMedia: [],
+        uncertainNodes: [],
+        manualJudgment: ''
+      }
+    };
+    ipcRenderer.invoke('update-task-data', taskData).then(() => {
+      ipcRenderer.invoke('generate-conclusion', taskData.conclusions);
     });
   });
 
@@ -135,27 +144,21 @@ function setupEventListeners() {
 }
 
 function addUrls(urls) {
-  const keywords = keywordsInput.value || '新闻事件';
-  
-  urls.forEach((url, i) => {
+  urls.forEach((url) => {
     const existing = articles.find(a => a.url === url);
     if (!existing) {
       const idx = articles.length;
       const article = {
-        id: idx,
-        title: `新闻稿件 ${idx + 1}`,
-        source: `来源${idx + 1}`,
-        publishTime: new Date(Date.now() - i * 3600000 - Math.random() * 3600000).toISOString().slice(0, 19).replace('T', ' '),
+        id: Date.now() + idx,
+        title: '',
+        source: '',
+        publishTime: '',
         url: url,
-        paragraphs: [
-          '这是一篇示例新闻稿件的第一段内容。',
-          '第二段介绍了事件的背景和详细情况。',
-          '第三段分析了事件可能带来的影响。',
-          '最后一段是总结和展望。'
-        ],
-        images: [`img${idx}.jpg`],
+        paragraphs: [],
+        images: [],
         type: 'unknown',
-        similarity: 0
+        similarity: 0,
+        needsEdit: true
       };
       articles.push(article);
     }
@@ -171,20 +174,101 @@ function renderChains() {
     chainList.innerHTML = `
       <div class="empty-state">
         <div class="icon">📋</div>
-        <p>添加链接后自动生成候选链路</p>
+        <p>添加链接后可补填稿件信息</p>
       </div>
     `;
-    chainCount.textContent = '0 条';
+    articleCount.textContent = '0 篇';
     return;
   }
 
-  if (currentView === 'chains') {
+  articleCount.textContent = `${articles.length} 篇`;
+
+  if (currentView === 'edit') {
+    renderEditView();
+  } else if (currentView === 'chains') {
     renderChainView();
   } else {
     renderListView();
   }
+}
+
+function renderEditView() {
+  let html = '';
   
-  chainCount.textContent = `${candidateChains.length} 条链路`;
+  const sorted = [...articles].sort((a, b) => {
+    if (a.publishTime && b.publishTime) return new Date(a.publishTime) - new Date(b.publishTime);
+    return 0;
+  });
+
+  sorted.forEach(article => {
+    const isEmpty = !article.title && !article.source;
+    const borderClass = isEmpty ? 'border-color: #eb3349;' : 'border-color: #2d2d4a;';
+    
+    html += `
+      <div class="article-item" data-article-id="${article.id}" style="${borderClass} cursor: default;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <span style="font-size: 11px; color: #7c7c9a; word-break: break-all;">${article.url}</span>
+          <button class="btn btn-danger btn-small delete-btn" data-article-id="${article.id}" style="flex-shrink: 0; margin-left: 8px;">删除</button>
+        </div>
+        ${isEmpty ? '<div style="color: #eb3349; font-size: 11px; margin-bottom: 8px;">请补填以下信息后生成链路</div>' : ''}
+        <div class="input-group" style="margin-bottom: 6px;">
+          <label>标题</label>
+          <input type="text" class="edit-field" data-field="title" data-id="${article.id}" value="${escapeHtml(article.title)}" placeholder="请输入新闻标题">
+        </div>
+        <div style="display: flex; gap: 8px; margin-bottom: 6px;">
+          <div class="input-group" style="flex: 1; margin-bottom: 0;">
+            <label>来源</label>
+            <input type="text" class="edit-field" data-field="source" data-id="${article.id}" value="${escapeHtml(article.source)}" placeholder="媒体名称">
+          </div>
+          <div class="input-group" style="flex: 1; margin-bottom: 0;">
+            <label>发布时间</label>
+            <input type="datetime-local" class="edit-field" data-field="publishTime" data-id="${article.id}" value="${toDatetimeLocal(article.publishTime)}" step="1">
+          </div>
+        </div>
+        <div class="input-group" style="margin-bottom: 0;">
+          <label>正文（每段一行）</label>
+          <textarea class="edit-field" data-field="paragraphs" data-id="${article.id}" rows="3" placeholder="将正文按段落粘贴，每段一行">${article.paragraphs.map(p => escapeHtml(p)).join('\n')}</textarea>
+        </div>
+      </div>
+    `;
+  });
+  
+  chainList.innerHTML = html;
+
+  chainList.querySelectorAll('.edit-field').forEach(field => {
+    const eventType = field.tagName === 'SELECT' ? 'change' : 'input';
+    field.addEventListener(eventType, (e) => {
+      const id = parseInt(field.dataset.id);
+      const fieldName = field.dataset.field;
+      const article = articles.find(a => a.id === id);
+      if (!article) return;
+
+      if (fieldName === 'paragraphs') {
+        article.paragraphs = field.value.split('\n').filter(p => p.trim());
+      } else if (fieldName === 'publishTime') {
+        article.publishTime = field.value ? field.value.replace('T', ' ') : '';
+      } else {
+        article[fieldName] = field.value;
+      }
+
+      article.needsEdit = !article.title || !article.source;
+      candidateChains = buildCandidateChains(articles);
+      updateTaskData();
+    });
+  });
+
+  chainList.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.articleId);
+      articles = articles.filter(a => a.id !== id);
+      selectedArticleIds.delete(id);
+      candidateChains = buildCandidateChains(articles);
+      renderChains();
+      updateButtons();
+      updateTaskData();
+    });
+  });
 }
 
 function renderChainView() {
@@ -192,14 +276,13 @@ function renderChainView() {
   
   candidateChains.forEach((chain, idx) => {
     const source = chain.source;
-    const isSelected = selectedArticleIds.has(source.id);
     
     html += `
       <div class="chain-group" data-source-id="${source.id}">
         <div class="chain-source">
           <span class="label">源头</span>
-          <span class="title">${source.title}</span>
-          <span style="font-size: 11px; color: #7c7c9a;">${formatTime(source.publishTime)}</span>
+          <span class="title">${source.title || '(未填写标题)'}</span>
+          <span style="font-size: 11px; color: #7c7c9a;">${source.source || '?'} · ${formatTime(source.publishTime)}</span>
         </div>
     `;
     
@@ -209,7 +292,7 @@ function renderChainView() {
       
       html += `
         <div class="chain-reprint ${rSelected ? 'selected' : ''}" data-article-id="${rArticle.id}" style="cursor: pointer;">
-          <span class="title">${rArticle.title}</span>
+          <span class="title">${rArticle.title || '(未填写标题)'}</span>
           <span class="sim">${reprint.similarity}%</span>
           <span class="time">+${Math.round(reprint.timeDiff)}分钟</span>
         </div>
@@ -237,7 +320,10 @@ function renderChainView() {
 }
 
 function renderListView() {
-  const sorted = [...articles].sort((a, b) => new Date(a.publishTime) - new Date(b.publishTime));
+  const sorted = [...articles].sort((a, b) => {
+    if (a.publishTime && b.publishTime) return new Date(a.publishTime) - new Date(b.publishTime);
+    return 0;
+  });
   
   let html = '';
   sorted.forEach(article => {
@@ -247,9 +333,9 @@ function renderListView() {
     
     html += `
       <div class="article-item ${isSelected ? 'selected' : ''}" data-article-id="${article.id}">
-        <div class="title">${article.title}</div>
+        <div class="title">${article.title || '(未填写标题)'}</div>
         <div class="meta">
-          <span class="source">${article.source} · ${formatTime(article.publishTime)}</span>
+          <span class="source">${article.source || '未知来源'} · ${article.publishTime ? formatTime(article.publishTime) : '未知时间'}</span>
           <span class="similarity">相似度 ${sim}</span>
         </div>
         <div style="margin-top: 6px;">
@@ -288,8 +374,22 @@ function getTypeLabel(type) {
 }
 
 function formatTime(timeStr) {
+  if (!timeStr) return '未知';
   const date = new Date(timeStr);
+  if (isNaN(date.getTime())) return timeStr;
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function toDatetimeLocal(timeStr) {
+  if (!timeStr) return '';
+  const d = new Date(timeStr);
+  if (isNaN(d.getTime())) return '';
+  return d.toISOString().slice(0, 16);
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function updateButtons() {
@@ -317,6 +417,7 @@ function loadTaskData() {
       clientNameInput.value = data.clientName || '';
       keywordsInput.value = data.keywords || '';
       renderChains();
+      updateButtons();
     }
   });
 }
@@ -325,6 +426,7 @@ ipcRenderer.on('task-data-updated', (event, data) => {
   articles = data.articles || [];
   candidateChains = data.candidateChains || [];
   renderChains();
+  updateButtons();
 });
 
 init();

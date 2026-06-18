@@ -203,7 +203,12 @@ function analyzeDifferences(article1, article2) {
     title: {
       original: article1.title,
       compared: article2.title,
-      changeType: article2.titleDiff || '存在差异'
+      changeType: article2.titleDiff || detectTitleChange(article1.title, article2.title)
+    },
+    source: {
+      original: article1.source,
+      compared: article2.source,
+      changeType: detectSourceChange(article1, article2)
     },
     paragraphs: {
       same: [],
@@ -212,16 +217,19 @@ function analyzeDifferences(article1, article2) {
       removed: []
     },
     images: {
-      change: article2.imageDiff || '无变化',
-      originalCount: article1.images.length,
-      comparedCount: article2.images.length
+      change: article2.imageDiff || detectImageChange(article1.images, article2.images),
+      originalCount: article1.images ? article1.images.length : 0,
+      comparedCount: article2.images ? article2.images.length : 0
     }
   };
 
-  const maxLen = Math.max(article1.paragraphs.length, article2.paragraphs.length);
+  const maxLen = Math.max(
+    article1.paragraphs ? article1.paragraphs.length : 0,
+    article2.paragraphs ? article2.paragraphs.length : 0
+  );
   for (let i = 0; i < maxLen; i++) {
-    const p1 = article1.paragraphs[i] || '';
-    const p2 = article2.paragraphs[i] || '';
+    const p1 = (article1.paragraphs && article1.paragraphs[i]) || '';
+    const p2 = (article2.paragraphs && article2.paragraphs[i]) || '';
     
     if (!p1 && p2) {
       differences.paragraphs.added.push({ index: i, content: p2 });
@@ -238,6 +246,72 @@ function analyzeDifferences(article1, article2) {
   }
 
   return differences;
+}
+
+function detectTitleChange(title1, title2) {
+  if (!title1 || !title2) return '标题信息缺失';
+  if (title1 === title2) return '标题无变化';
+  const sim = stringSimilarity(title1, title2);
+  if (sim > 80) return '标题微调';
+  if (sim > 50) return '标题改写';
+  return '标题大幅修改';
+}
+
+function detectSourceChange(article1, article2) {
+  const s1 = article1.source || '';
+  const s2 = article2.source || '';
+  const a1 = article1.author || '';
+  const a2 = article2.author || '';
+  const note1 = article1.sourceNote || '';
+  const note2 = article2.sourceNote || '';
+  
+  const changes = [];
+
+  if (s1 && s2 && s1 !== s2) {
+    const sim = stringSimilarity(s1, s2);
+    if (sim > 70) {
+      changes.push(`媒体名微调："${s1}"→"${s2}"`);
+    } else {
+      changes.push(`媒体名替换："${s1}"→"${s2}"`);
+    }
+  } else if (s1 && !s2) {
+    changes.push(`来源信息被删除（原文：${s1}）`);
+  } else if (!s1 && s2) {
+    changes.push(`新增来源标注：${s2}`);
+  } else if (s1 && s2 && s1 === s2) {
+    changes.push(`来源保留：${s1}`);
+  }
+
+  if (a1 && !a2) {
+    changes.push(`原文署名被删除（${a1}）`);
+  } else if (a1 && a2 && a1 !== a2) {
+    changes.push(`署名变更："${a1}"→"${a2}"`);
+  } else if (!a1 && a2) {
+    changes.push(`新增署名：${a2}`);
+  }
+
+  if (note1 && !note2) {
+    changes.push(`来源说明被删除（${note1}）`);
+  } else if (note1 && note2 && note1 !== note2) {
+    changes.push(`来源说明变更："${note1}"→"${note2}"`);
+  } else if (!note1 && note2) {
+    changes.push(`新增来源说明：${note2}`);
+  }
+
+  return changes.length > 0 ? changes.join('；') : '来源无变化';
+}
+
+function detectImageChange(images1, images2) {
+  const i1 = images1 || [];
+  const i2 = images2 || [];
+  if (i1.length === 0 && i2.length === 0) return '无配图';
+  if (i1.length === i2.length) {
+    const allSame = i1.every((img, idx) => img === i2[idx]);
+    return allSame ? '图片完全一致' : `${i1.length}张配图中有变化`;
+  }
+  if (i1.length === 0) return `新增${i2.length}张配图`;
+  if (i2.length === 0) return `原文${i1.length}张配图全部删除`;
+  return `配图数量变化：${i1.length}张→${i2.length}张`;
 }
 
 function generateConclusionReport(taskData) {
@@ -293,6 +367,9 @@ if (typeof module !== 'undefined' && module.exports) {
     calculateSimilarity,
     stringSimilarity,
     analyzeDifferences,
+    detectTitleChange,
+    detectSourceChange,
+    detectImageChange,
     generateConclusionReport
   };
 }
