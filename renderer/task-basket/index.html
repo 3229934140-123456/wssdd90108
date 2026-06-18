@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>任务篮 - 转载核查工具</title>
+  <link rel="stylesheet" href="../../shared/style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="window-title">
+      <span class="dot"></span>
+      任务篮
+    </div>
+
+    <div class="section">
+      <div class="input-group">
+        <label>客户名称</label>
+        <input type="text" id="clientName" placeholder="请输入客户名称">
+      </div>
+      <div class="input-group">
+        <label>事件关键词</label>
+        <input type="text" id="keywords" placeholder="多个关键词用空格分隔">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">
+        <span>疑似新闻链接</span>
+        <button class="btn btn-secondary btn-small" id="pasteBtn">粘贴</button>
+      </div>
+      <div class="drop-zone" id="dropZone">
+        <p>拖拽链接到此处</p>
+        <p class="hint">或点击下方按钮添加示例数据</p>
+      </div>
+      <div style="margin-top: 8px; display: flex; gap: 8px;">
+        <button class="btn btn-secondary btn-small" id="addSampleBtn">加载示例数据</button>
+        <button class="btn btn-secondary btn-small" id="clearBtn">清空</button>
+      </div>
+    </div>
+
+    <div class="section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+      <div class="section-title">
+        <span>候选传播链路</span>
+        <span id="chainCount" style="font-size: 11px; color: #7c7c9a;">0 条</span>
+      </div>
+      <div class="tabs" id="viewTabs">
+        <div class="tab active" data-view="chains">链路视图</div>
+        <div class="tab" data-view="list">列表视图</div>
+      </div>
+      <div class="article-list" id="chainList">
+        <div class="empty-state">
+          <div class="icon">📋</div>
+          <p>添加链接后自动生成候选链路</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn btn-secondary" id="compareBtn" disabled>对照选中稿件</button>
+      <button class="btn btn-primary" id="generateBtn" disabled>生成核查结论</button>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

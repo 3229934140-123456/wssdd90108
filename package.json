@@ -1,0 +1,20 @@
+{
+  "name": "reprint-checker",
+  "version": "1.0.0",
+  "description": "舆情监测转载核查工具 - 夜班分析师专用",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev"
+  },
+  "keywords": [
+    "electron",
+    "舆情监测",
+    "转载核查"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0"
+  }
+}
