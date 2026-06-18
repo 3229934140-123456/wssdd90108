@@ -7,6 +7,7 @@ let rightArticle = null;
 let currentPairIndex = 0;
 let articlePairs = [];
 let selectedSource = null;
+let evidenceSelection = {};
 
 const leftSelect = document.getElementById('leftSelect');
 const rightSelect = document.getElementById('rightSelect');
@@ -84,6 +85,8 @@ function loadInitialData() {
   ipcRenderer.invoke('get-task-data').then(data => {
     if (data && data.articles) {
       articles = data.articles;
+      evidenceSelection = data.evidenceSelection || {};
+      if (typeof evidenceSelection !== 'object' || Array.isArray(evidenceSelection)) evidenceSelection = {};
       populateSelects();
       generatePairs(data.candidateChains);
       
@@ -267,19 +270,28 @@ function renderEvidence(diff) {
   modifiedCount.textContent = diff.paragraphs.modified.length;
 
   const maxShow = 3;
+  const lId = leftArticle ? leftArticle.id : 'L';
+  const rId = rightArticle ? rightArticle.id : 'R';
+  const pairKey = `${lId}_${rId}`;
 
   if (diff.paragraphs.same.length === 0) {
     sameEvidence.innerHTML = '<span style="color: #5c5c7a;">暂无相同段落</span>';
   } else {
     const items = diff.paragraphs.same.slice(0, maxShow);
-    sameEvidence.innerHTML = items.map((item, i) => `
-      <div class="evidence-item" style="padding: 6px 8px; margin-bottom: 4px; background: rgba(78, 204, 163, 0.08); border-radius: 4px; border-left: 2px solid #4ecca3;">
-        <span style="color: #4ecca3; font-size: 10px; font-weight: 600;">第${item.index + 1}段</span>
-        <div style="color: #b0b0c0; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
-          ${item.content1.substring(0, 120)}${item.content1.length > 120 ? '...' : ''}
+    sameEvidence.innerHTML = items.map((item, i) => {
+      const evKey = `${pairKey}_same_${item.index}`;
+      const checked = evidenceSelection[evKey] ? 'checked' : '';
+      return `
+      <div class="evidence-item" data-evidence-key="${evKey}" style="padding: 6px 8px; margin-bottom: 4px; background: rgba(78, 204, 163, 0.08); border-radius: 4px; border-left: 2px solid #4ecca3; display: flex; gap: 6px; align-items: flex-start;">
+        <input type="checkbox" class="evidence-checkbox" data-evidence-key="${evKey}" data-evidence-type="same" data-evidence-data='${escapeHtml(JSON.stringify({ type: 'same', index: item.index, content: item.content1, leftId: lId, rightId: rId, leftSource: leftArticle ? leftArticle.source : '', rightSource: rightArticle ? rightArticle.source : '' }))}' style="margin-top: 3px; flex-shrink: 0;" ${checked}>
+        <div style="flex: 1; min-width: 0;">
+          <span style="color: #4ecca3; font-size: 10px; font-weight: 600;">第${item.index + 1}段</span>
+          <div style="color: #b0b0c0; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+            ${item.content1.substring(0, 120)}${item.content1.length > 120 ? '...' : ''}
+          </div>
         </div>
       </div>
-    `).join('') + (diff.paragraphs.same.length > maxShow
+    `}).join('') + (diff.paragraphs.same.length > maxShow
       ? `<div style="font-size: 10px; color: #5c5c7a; margin-top: 4px;">还有 ${diff.paragraphs.same.length - maxShow} 段...</div>`
       : '');
   }
@@ -288,15 +300,21 @@ function renderEvidence(diff) {
     modifiedEvidence.innerHTML = '<span style="color: #5c5c7a;">暂无改写段落</span>';
   } else {
     const items = diff.paragraphs.modified.slice(0, maxShow);
-    modifiedEvidence.innerHTML = items.map((item, i) => `
-      <div class="evidence-item" style="padding: 6px 8px; margin-bottom: 6px; background: rgba(255, 193, 7, 0.08); border-radius: 4px; border-left: 2px solid #ffc107;">
-        <span style="color: #ffc107; font-size: 10px; font-weight: 600;">第${item.index + 1}段（相似度 ${item.similarity}%）</span>
-        <div style="color: #b0b0c0; margin-top: 2px; font-size: 11px;">
-          <div style="color: #7c7c9a; font-size: 10px;">左：${item.content1.substring(0, 60)}${item.content1.length > 60 ? '...' : ''}</div>
-          <div style="color: #e0e0e0; font-size: 10px; margin-top: 2px;">右：${item.content2.substring(0, 60)}${item.content2.length > 60 ? '...' : ''}</div>
+    modifiedEvidence.innerHTML = items.map((item, i) => {
+      const evKey = `${pairKey}_modified_${item.index}`;
+      const checked = evidenceSelection[evKey] ? 'checked' : '';
+      return `
+      <div class="evidence-item" data-evidence-key="${evKey}" style="padding: 6px 8px; margin-bottom: 6px; background: rgba(255, 193, 7, 0.08); border-radius: 4px; border-left: 2px solid #ffc107; display: flex; gap: 6px; align-items: flex-start;">
+        <input type="checkbox" class="evidence-checkbox" data-evidence-key="${evKey}" data-evidence-type="modified" data-evidence-data='${escapeHtml(JSON.stringify({ type: 'modified', index: item.index, similarity: item.similarity, leftContent: item.content1, rightContent: item.content2, leftId: lId, rightId: rId, leftSource: leftArticle ? leftArticle.source : '', rightSource: rightArticle ? rightArticle.source : '' }))}' style="margin-top: 10px; flex-shrink: 0;" ${checked}>
+        <div style="flex: 1; min-width: 0;">
+          <span style="color: #ffc107; font-size: 10px; font-weight: 600;">第${item.index + 1}段（相似度 ${item.similarity}%）</span>
+          <div style="color: #b0b0c0; margin-top: 2px; font-size: 11px;">
+            <div style="color: #7c7c9a; font-size: 10px;">左：${item.content1.substring(0, 60)}${item.content1.length > 60 ? '...' : ''}</div>
+            <div style="color: #e0e0e0; font-size: 10px; margin-top: 2px;">右：${item.content2.substring(0, 60)}${item.content2.length > 60 ? '...' : ''}</div>
+          </div>
         </div>
       </div>
-    `).join('') + (diff.paragraphs.modified.length > maxShow
+    `}).join('') + (diff.paragraphs.modified.length > maxShow
       ? `<div style="font-size: 10px; color: #5c5c7a; margin-top: 4px;">还有 ${diff.paragraphs.modified.length - maxShow} 段...</div>`
       : '');
   }
@@ -310,20 +328,53 @@ function renderEvidence(diff) {
     const maxQuoteShow = 3;
     const allQuotes = [];
 
-    leftQuotes.slice(0, maxQuoteShow).forEach(q => {
-      allQuotes.push({ side: 'left', text: q });
+    leftQuotes.slice(0, maxQuoteShow).forEach((q, qi) => {
+      allQuotes.push({ side: 'left', text: q, qi });
     });
-    rightQuotes.slice(0, maxQuoteShow).forEach(q => {
-      allQuotes.push({ side: 'right', text: q });
+    rightQuotes.slice(0, maxQuoteShow).forEach((q, qi) => {
+      allQuotes.push({ side: 'right', text: q, qi: qi + 100 });
     });
 
-    quoteEvidence.innerHTML = allQuotes.map(q => `
-      <div class="evidence-item" style="padding: 5px 8px; margin-bottom: 4px; background: rgba(102, 126, 234, 0.08); border-radius: 4px; border-left: 2px solid #667eea;">
-        <span style="color: #667eea; font-size: 10px; font-weight: 600;">${q.side === 'left' ? '左稿' : '右稿'}</span>
-        <span style="color: #b0b0c0; font-size: 11px; margin-left: 6px;">${q.text}</span>
+    quoteEvidence.innerHTML = allQuotes.map(q => {
+      const evKey = `${pairKey}_quote_${q.side}_${q.qi}`;
+      const checked = evidenceSelection[evKey] ? 'checked' : '';
+      return `
+      <div class="evidence-item" data-evidence-key="${evKey}" style="padding: 5px 8px; margin-bottom: 4px; background: rgba(102, 126, 234, 0.08); border-radius: 4px; border-left: 2px solid #667eea; display: flex; gap: 6px; align-items: flex-start;">
+        <input type="checkbox" class="evidence-checkbox" data-evidence-key="${evKey}" data-evidence-type="quote" data-evidence-data='${escapeHtml(JSON.stringify({ type: 'quote', side: q.side, text: q.text, leftId: lId, rightId: rId, leftSource: leftArticle ? leftArticle.source : '', rightSource: rightArticle ? rightArticle.source : '' }))}' style="margin-top: 3px; flex-shrink: 0;" ${checked}>
+        <div style="flex: 1; min-width: 0;">
+          <span style="color: #667eea; font-size: 10px; font-weight: 600;">${q.side === 'left' ? '左稿' : '右稿'}</span>
+          <span style="color: #b0b0c0; font-size: 11px; margin-left: 6px;">${q.text}</span>
+        </div>
       </div>
-    `).join('');
+    `}).join('');
   }
+
+  bindEvidenceCheckboxes();
+}
+
+function bindEvidenceCheckboxes() {
+  document.querySelectorAll('.evidence-checkbox').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const key = cb.dataset.evidenceKey;
+      let evData = null;
+      try { evData = JSON.parse(cb.dataset.evidenceData); } catch (e) { evData = null; }
+      if (cb.checked) {
+        evidenceSelection[key] = evData || { key };
+      } else {
+        delete evidenceSelection[key];
+      }
+      saveEvidenceSelection();
+    });
+  });
+}
+
+function saveEvidenceSelection() {
+  ipcRenderer.invoke('update-evidence-selection', evidenceSelection);
+}
+
+function escapeHtml(str) {
+  if (typeof str !== 'string') str = String(str);
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function extractQuoteSentences(article) {

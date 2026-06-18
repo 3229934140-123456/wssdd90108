@@ -11,11 +11,19 @@ let currentTaskData = {
   articles: [],
   candidateChains: [],
   selectedArticles: [],
+  chainMarks: {
+    keyMediaIds: [],
+    uncertainIds: [],
+    sourceId: null
+  },
+  evidenceSelection: [],
   conclusions: {
     source: null,
     keyMedia: [],
     uncertainNodes: [],
-    manualJudgment: ''
+    manualJudgment: '',
+    timelineOrder: [],
+    manuallyAdjustedIds: []
   }
 };
 
@@ -162,4 +170,29 @@ ipcMain.handle('focus-window', (event, windowName) => {
     win.focus();
   }
   return true;
+});
+
+ipcMain.handle('update-chain-marks', (event, marks) => {
+  currentTaskData.chainMarks = { ...currentTaskData.chainMarks, ...marks };
+  if (marks.sourceId) {
+    currentTaskData.conclusions.source = marks.sourceId;
+  }
+  if (marks.keyMediaIds) {
+    currentTaskData.conclusions.keyMedia = marks.keyMediaIds;
+  }
+  if (marks.uncertainIds) {
+    currentTaskData.conclusions.uncertainNodes = marks.uncertainIds;
+  }
+  if (conclusionWin) {
+    conclusionWin.webContents.send('task-data-updated', currentTaskData);
+  }
+  return currentTaskData.chainMarks;
+});
+
+ipcMain.handle('update-evidence-selection', (event, selection) => {
+  currentTaskData.evidenceSelection = selection;
+  if (conclusionWin) {
+    conclusionWin.webContents.send('task-data-updated', currentTaskData);
+  }
+  return currentTaskData.evidenceSelection;
 });

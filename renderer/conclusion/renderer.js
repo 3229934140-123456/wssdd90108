@@ -9,6 +9,31 @@ let taskData = null;
 let timelineOrder = [];
 let manuallyAdjustedIds = new Set();
 let dragSourceId = null;
+let localEvidenceSelection = {};
+
+function extractId(val) {
+  if (val === null || val === undefined) return null;
+  if (typeof val === 'object') return val.id;
+  return val;
+}
+
+function applyChainMarks(data) {
+  if (!data) return;
+  if (data.chainMarks) {
+    if (data.chainMarks.sourceId !== undefined && data.chainMarks.sourceId !== null) {
+      selectedSourceId = data.chainMarks.sourceId;
+    }
+    if (Array.isArray(data.chainMarks.keyMediaIds)) {
+      selectedKeyMediaIds = new Set(data.chainMarks.keyMediaIds);
+    }
+    if (Array.isArray(data.chainMarks.uncertainIds)) {
+      selectedUncertainIds = new Set(data.chainMarks.uncertainIds);
+    }
+  }
+  if (data.evidenceSelection && typeof data.evidenceSelection === 'object' && !Array.isArray(data.evidenceSelection)) {
+    localEvidenceSelection = { ...data.evidenceSelection };
+  }
+}
 
 const sourceList = document.getElementById('sourceList');
 const keyMediaList = document.getElementById('keyMediaList');
@@ -337,15 +362,16 @@ function loadTaskData() {
     if (data && data.articles) {
       articles = data.articles;
 
+      applyChainMarks(data);
+
       if (data.conclusions) {
-        if (data.conclusions.source) {
-          selectedSourceId = data.conclusions.source.id;
+        const srcId = extractId(data.conclusions.source);
+        if (srcId !== null && selectedSourceId === null) selectedSourceId = srcId;
+        if (Array.isArray(data.conclusions.keyMedia) && selectedKeyMediaIds.size === 0) {
+          selectedKeyMediaIds = new Set(data.conclusions.keyMedia.map(extractId).filter(Boolean));
         }
-        if (data.conclusions.keyMedia) {
-          selectedKeyMediaIds = new Set(data.conclusions.keyMedia.map(a => a.id));
-        }
-        if (data.conclusions.uncertainNodes) {
-          selectedUncertainIds = new Set(data.conclusions.uncertainNodes.map(a => a.id));
+        if (Array.isArray(data.conclusions.uncertainNodes) && selectedUncertainIds.size === 0) {
+          selectedUncertainIds = new Set(data.conclusions.uncertainNodes.map(extractId).filter(Boolean));
         }
         if (data.conclusions.manualJudgment) {
           judgmentInput.value = data.conclusions.manualJudgment;
@@ -462,7 +488,7 @@ function renderArticleLists() {
 }
 
 function updateReport() {
-  const source = articles.find(a => a.id === selectedSourceId);
+  const source = articles.find(a => String(a.id) === String(selectedSourceId));
   const keyMedia = articles.filter(a => selectedKeyMediaIds.has(a.id));
   const uncertain = articles.filter(a => selectedUncertainIds.has(a.id));
 
@@ -471,6 +497,7 @@ function updateReport() {
     keywords: taskData?.keywords || '',
     articles: articles,
     candidateChains: taskData?.candidateChains || [],
+    evidenceSelection: { ...(taskData?.evidenceSelection || {}), ...localEvidenceSelection },
     conclusions: {
       source: source,
       keyMedia: keyMedia,
@@ -496,6 +523,7 @@ ipcRenderer.on('task-data-updated', (event, data) => {
   taskData = data;
   if (data && data.articles) {
     articles = data.articles;
+    applyChainMarks(data);
     renderTimeline();
     renderArticleLists();
     updateReport();
@@ -507,14 +535,16 @@ ipcRenderer.on('load-conclusion', (event, data) => {
   if (data && data.articles) {
     articles = data.articles;
   }
+  applyChainMarks(data);
   if (data?.conclusions?.source) {
-    selectedSourceId = data.conclusions.source.id;
+    const sid = extractId(data.conclusions.source);
+    if (sid !== null && selectedSourceId === null) selectedSourceId = sid;
   }
-  if (data?.conclusions?.keyMedia) {
-    selectedKeyMediaIds = new Set(data.conclusions.keyMedia.map(a => a.id));
+  if (data?.conclusions?.keyMedia && selectedKeyMediaIds.size === 0) {
+    selectedKeyMediaIds = new Set(data.conclusions.keyMedia.map(extractId).filter(Boolean));
   }
-  if (data?.conclusions?.uncertainNodes) {
-    selectedUncertainIds = new Set(data.conclusions.uncertainNodes.map(a => a.id));
+  if (data?.conclusions?.uncertainNodes && selectedUncertainIds.size === 0) {
+    selectedUncertainIds = new Set(data.conclusions.uncertainNodes.map(extractId).filter(Boolean));
   }
   if (data?.conclusions?.manualJudgment) {
     judgmentInput.value = data.conclusions.manualJudgment;

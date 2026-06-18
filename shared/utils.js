@@ -434,8 +434,23 @@ function calcDuration(a, b) {
 }
 
 function generateConclusionReport(taskData) {
-  const { clientName, keywords, conclusions, candidateChains } = taskData;
-  const { source, keyMedia, uncertainNodes, manualJudgment } = conclusions || {};
+  const { clientName, keywords, conclusions, candidateChains, articles, evidenceSelection } = taskData;
+  let { source, keyMedia, uncertainNodes, manualJudgment } = conclusions || {};
+  const articleList = articles || [];
+
+  const findArticle = (id) => {
+    if (id && typeof id === 'object') return id;
+    if (id === null || id === undefined) return null;
+    return articleList.find(a => String(a.id) === String(id)) || null;
+  };
+
+  if (source && typeof source !== 'object') source = findArticle(source);
+  if (keyMedia && keyMedia.length > 0 && typeof keyMedia[0] !== 'object') {
+    keyMedia = keyMedia.map(id => findArticle(id)).filter(Boolean);
+  }
+  if (uncertainNodes && uncertainNodes.length > 0 && typeof uncertainNodes[0] !== 'object') {
+    uncertainNodes = uncertainNodes.map(id => findArticle(id)).filter(Boolean);
+  }
   
   let report = '';
   report += `【转载核查报告】\n`;
@@ -444,7 +459,8 @@ function generateConclusionReport(taskData) {
   report += `生成时间：${new Date().toLocaleString('zh-CN')}\n\n`;
   
   report += `一、传播路径概览（自动生成）\n`;
-  report += `  ${generatePropagationPath(taskData)}\n\n`;
+  const pathData = { ...taskData, conclusions: { ...(conclusions || {}), source, keyMedia, uncertainNodes } };
+  report += `  ${generatePropagationPath(pathData)}\n\n`;
   
   report += `二、传播源头判断\n`;
   if (source) {
@@ -478,6 +494,49 @@ function generateConclusionReport(taskData) {
   
   report += `五、人工判断补充\n`;
   report += `  ${manualJudgment || '暂无补充说明'}\n`;
+  report += `\n`;
+
+  report += `六、证据说明\n`;
+  const evItems = Object.values(evidenceSelection || {}).filter(Boolean);
+  if (evItems.length === 0) {
+    report += `  （未勾选证据，分析师可在相似稿对照窗口勾选相关证据）\n`;
+  } else {
+    let idx = 1;
+    const sameItems = evItems.filter(e => e.type === 'same');
+    const modifiedItems = evItems.filter(e => e.type === 'modified');
+    const quoteItems = evItems.filter(e => e.type === 'quote');
+
+    if (sameItems.length > 0) {
+      report += `  ✓ 相同段落（${sameItems.length}段）\n`;
+      sameItems.forEach(ev => {
+        const srcA = ev.leftSource || '';
+        const srcB = ev.rightSource || '';
+        report += `    ${idx}. 第${(ev.index || 0) + 1}段 两稿相同\n`;
+        report += `       【${srcA}↔${srcB}】${(ev.content || '').substring(0, 140)}${(ev.content || '').length > 140 ? '...' : ''}\n`;
+        idx++;
+      });
+    }
+    if (modifiedItems.length > 0) {
+      report += `  ↻ 改写段落（${modifiedItems.length}段）\n`;
+      modifiedItems.forEach(ev => {
+        const srcA = ev.leftSource || '';
+        const srcB = ev.rightSource || '';
+        report += `    ${idx}. 第${(ev.index || 0) + 1}段 相似度${ev.similarity || '?'}%\n`;
+        report += `       ${srcA}：${(ev.leftContent || '').substring(0, 80)}${(ev.leftContent || '').length > 80 ? '...' : ''}\n`;
+        report += `       ${srcB}：${(ev.rightContent || '').substring(0, 80)}${(ev.rightContent || '').length > 80 ? '...' : ''}\n`;
+        idx++;
+      });
+    }
+    if (quoteItems.length > 0) {
+      report += `  ↗ 来源引用句（${quoteItems.length}条）\n`;
+      quoteItems.forEach(ev => {
+        const side = ev.side === 'left' ? (ev.leftSource || '左稿') : (ev.rightSource || '右稿');
+        report += `    ${idx}. [${side}] ${(ev.text || '').substring(0, 140)}${(ev.text || '').length > 140 ? '...' : ''}\n`;
+        idx++;
+      });
+    }
+  }
+  report += `\n`;
   
   return report;
 }
