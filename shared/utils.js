@@ -264,6 +264,8 @@ function detectSourceChange(article1, article2) {
   const a2 = article2.author || '';
   const note1 = article1.sourceNote || '';
   const note2 = article2.sourceNote || '';
+  const paras1 = (article1.paragraphs || []).join('\n');
+  const paras2 = (article2.paragraphs || []).join('\n');
   
   const changes = [];
 
@@ -296,7 +298,35 @@ function detectSourceChange(article1, article2) {
     changes.push(`来源说明变更："${note1}"→"${note2}"`);
   } else if (!note1 && note2) {
     changes.push(`新增来源说明：${note2}`);
+  } else if (note1 && note2 && note1 === note2) {
+    changes.push(`来源说明保留：${note1}`);
   }
+
+  const reprintPatterns = [
+    /转载自[：: ]*([^\s，,。；;]+)/g,
+    /引用自[：: ]*([^\s，,。；;]+)/g,
+    /来源[：: ]*([^\s，,。；;]+)/g,
+    /[据据从][ ]*([^\s，,。；;]+)[ ]*(报道|消息|获悉)/g,
+    /([^\s，,。；;]+)[ ]*(报道|讯|消息)/g
+  ];
+  
+  const noteMatches1 = new Set();
+  const noteMatches2 = new Set();
+  
+  reprintPatterns.forEach(pat => {
+    [...paras1.matchAll(pat)].forEach(m => { if (m[1]) noteMatches1.add(m[1].replace(/[《》""'']/g, '')); });
+    [...paras2.matchAll(pat)].forEach(m => { if (m[1]) noteMatches2.add(m[1].replace(/[《》""'']/g, '')); });
+    if (note1) [...note1.matchAll(pat)].forEach(m => { if (m[1]) noteMatches1.add(m[1].replace(/[《》""'']/g, '')); });
+    if (note2) [...note2.matchAll(pat)].forEach(m => { if (m[1]) noteMatches2.add(m[1].replace(/[《》""'']/g, '')); });
+  });
+  
+  const in1not2 = [...noteMatches1].filter(x => ![...noteMatches2].includes(x));
+  const in2not1 = [...noteMatches2].filter(x => ![...noteMatches1].includes(x));
+  const inBoth = [...noteMatches1].filter(x => [...noteMatches2].includes(x));
+  
+  if (inBoth.length > 0) changes.push(`正文中引用保留：${inBoth.join('、')}`);
+  if (in1not2.length > 0) changes.push(`正文引用被删除：${in1not2.join('、')}`);
+  if (in2not1.length > 0) changes.push(`新增正文引用：${in2not1.join('、')}`);
 
   return changes.length > 0 ? changes.join('；') : '来源无变化';
 }
@@ -314,9 +344,82 @@ function detectImageChange(images1, images2) {
   return `配图数量变化：${i1.length}张→${i2.length}张`;
 }
 
+function generatePropagationPath(taskData) {
+  const { articles, conclusions } = taskData;
+  const { source, keyMedia, uncertainNodes } = conclusions || {};
+  const keyMediaIds = new Set((keyMedia || []).map(a => a.id));
+  const uncertainIds = new Set((uncertainNodes || []).map(a => a.id));
+
+  const sorted = [...(articles || [])].sort((a, b) => {
+    const t1 = a.publishTime ? new Date(a.publishTime).getTime() : Infinity;
+    const t2 = b.publishTime ? new Date(b.publishTime).getTime() : Infinity;
+    return t1 - t2;
+  });
+
+  if (sorted.length === 0) return '（暂无可分析稿件）';
+
+  const pathParts = [];
+
+  if (source) {
+    pathParts.push(`《${source.source}》于${formatDateShort(source.publishTime)}首发`);
+  } else {
+    pathParts.push(`最早一篇为《${sorted[0].source}》${formatDateShort(sorted[0].publishTime)}发布（未标记为源头）`);
+  }
+
+  const keyList = sorted.filter(a => keyMediaIds.has(a.id));
+  if (keyList.length > 0) {
+    const keyStr = keyList.map(a => `《${a.source}》（${formatDateShort(a.publishTime)}）`).join('、');
+    pathParts.push(`经${keyStr}进行关键扩散`);
+  }
+
+  const uncertainList = sorted.filter(a => uncertainIds.has(a.id));
+  if (uncertainList.length > 0) {
+    const uncStr = uncertainList.map(a => `《${a.source}》`).join('、');
+    pathParts.push(`其中${uncStr}传播链路存疑`);
+  }
+
+  const rest = sorted.filter(a => {
+    if (source && a.id === source.id) return false;
+    if (keyMediaIds.has(a.id)) return false;
+    if (uncertainIds.has(a.id)) return false;
+    return true;
+  });
+
+  if (rest.length > 0) {
+    const last = rest[rest.length - 1];
+    pathParts.push(`后续共有${rest.length}家媒体跟进转载，最晚为《${last.source}》${formatDateShort(last.publishTime)}`);
+  }
+
+  const overallDur = calcDuration(sorted[0], sorted[sorted.length - 1]);
+  if (overallDur) {
+    pathParts.push(`整体传播时长约${overallDur}`);
+  }
+
+  return pathParts.join('，') + '。';
+}
+
+function formatDateShort(timeStr) {
+  if (!timeStr) return '时间未知';
+  const d = new Date(timeStr);
+  if (isNaN(d.getTime())) return timeStr;
+  return `${d.getMonth() + 1}月${d.getDate()}日${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function calcDuration(a, b) {
+  if (!a?.publishTime || !b?.publishTime) return null;
+  const t1 = new Date(a.publishTime).getTime();
+  const t2 = new Date(b.publishTime).getTime();
+  const diff = Math.abs(t2 - t1);
+  if (diff === 0) return null;
+  const hours = diff / (1000 * 60 * 60);
+  if (hours >= 1) return `${hours.toFixed(1)}小时`;
+  const minutes = diff / (1000 * 60);
+  return `${Math.round(minutes)}分钟`;
+}
+
 function generateConclusionReport(taskData) {
   const { clientName, keywords, conclusions, candidateChains } = taskData;
-  const { source, keyMedia, uncertainNodes, manualJudgment } = conclusions;
+  const { source, keyMedia, uncertainNodes, manualJudgment } = conclusions || {};
   
   let report = '';
   report += `【转载核查报告】\n`;
@@ -324,7 +427,10 @@ function generateConclusionReport(taskData) {
   report += `事件关键词：${keywords || '未填写'}\n`;
   report += `生成时间：${new Date().toLocaleString('zh-CN')}\n\n`;
   
-  report += `一、传播源头判断\n`;
+  report += `一、传播路径概览（自动生成）\n`;
+  report += `  ${generatePropagationPath(taskData)}\n\n`;
+  
+  report += `二、传播源头判断\n`;
   if (source) {
     report += `  源头媒体：${source.source}\n`;
     report += `  首发时间：${source.publishTime}\n`;
@@ -334,7 +440,7 @@ function generateConclusionReport(taskData) {
   }
   report += `\n`;
   
-  report += `二、关键扩散媒体\n`;
+  report += `三、关键扩散媒体\n`;
   if (keyMedia && keyMedia.length > 0) {
     keyMedia.forEach((m, i) => {
       report += `  ${i + 1}. ${m.source}（${m.publishTime}）\n`;
@@ -344,7 +450,7 @@ function generateConclusionReport(taskData) {
   }
   report += `\n`;
   
-  report += `三、不确定节点\n`;
+  report += `四、不确定节点\n`;
   if (uncertainNodes && uncertainNodes.length > 0) {
     uncertainNodes.forEach((m, i) => {
       report += `  ${i + 1}. ${m.source} - 需进一步核实\n`;
@@ -354,8 +460,8 @@ function generateConclusionReport(taskData) {
   }
   report += `\n`;
   
-  report += `四、人工判断\n`;
-  report += `  ${manualJudgment || '暂无'}\n`;
+  report += `五、人工判断补充\n`;
+  report += `  ${manualJudgment || '暂无补充说明'}\n`;
   
   return report;
 }

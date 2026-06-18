@@ -26,7 +26,19 @@
 
     <div class="section">
       <div class="section-title">
-        <span>疑似新闻链接</span>
+        <span>批量整理导入</span>
+        <button class="btn btn-secondary btn-small" id="toggleBatchBtn">展开</button>
+      </div>
+      <div id="batchArea" style="display: none;">
+        <textarea class="batch-textarea" id="batchInput" rows="5" placeholder="每行一条稿件，用「|」分隔字段：&#10;URL|标题|来源|2026-06-19 14:30:00|正文第一段||正文第二段||正文第三段&#10;也可单独粘贴标题、正文内容，系统会按空行切分每篇"></textarea>
+        <div style="margin-top: 8px; display: flex; gap: 8px;">
+          <button class="btn btn-primary btn-small" id="parseBatchBtn">解析导入</button>
+          <button class="btn btn-secondary btn-small" id="pasteBatchBtn">粘贴剪贴板</button>
+          <button class="btn btn-secondary btn-small" id="clearBatchBtn">清空输入框</button>
+        </div>
+      </div>
+      <div class="section-title" style="margin-top: 10px;">
+        <span>或拖拽/粘贴链接</span>
         <button class="btn btn-secondary btn-small" id="pasteBtn">粘贴</button>
       </div>
       <div class="drop-zone" id="dropZone">
@@ -48,6 +60,9 @@
         <div class="tab active" data-view="edit">编辑补填</div>
         <div class="tab" data-view="chains">链路视图</div>
         <div class="tab" data-view="list">列表视图</div>
+      </div>
+      <div id="missingWarning" style="display: none; background: rgba(235, 51, 73, 0.1); border: 1px solid rgba(235, 51, 73, 0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 12px; color: #ff8a95;">
+        <span id="missingText"></span>
       </div>
       <div class="article-list" id="chainList">
         <div class="empty-state">

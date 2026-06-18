@@ -17,6 +17,14 @@ const pasteBtn = document.getElementById('pasteBtn');
 const addSampleBtn = document.getElementById('addSampleBtn');
 const clearBtn = document.getElementById('clearBtn');
 const viewTabs = document.getElementById('viewTabs');
+const toggleBatchBtn = document.getElementById('toggleBatchBtn');
+const batchArea = document.getElementById('batchArea');
+const batchInput = document.getElementById('batchInput');
+const parseBatchBtn = document.getElementById('parseBatchBtn');
+const pasteBatchBtn = document.getElementById('pasteBatchBtn');
+const clearBatchBtn = document.getElementById('clearBatchBtn');
+const missingWarning = document.getElementById('missingWarning');
+const missingText = document.getElementById('missingText');
 
 function init() {
   setupDragDrop();
@@ -88,6 +96,7 @@ function setupEventListeners() {
     candidateChains = buildCandidateChains(articles);
     
     renderChains();
+    updateMissingWarning();
     updateTaskData();
   });
 
@@ -97,6 +106,7 @@ function setupEventListeners() {
     selectedArticleIds.clear();
     renderChains();
     updateButtons();
+    updateMissingWarning();
     updateTaskData();
   });
 
@@ -110,6 +120,9 @@ function setupEventListeners() {
 
   generateBtn.addEventListener('click', () => {
     candidateChains = buildCandidateChains(articles);
+    const completeArticles = articles.filter(a => a.title && a.publishTime);
+    const missingArticles = articles.filter(a => !a.title || !a.publishTime);
+
     const taskData = {
       clientName: clientNameInput.value,
       keywords: keywordsInput.value,
@@ -122,6 +135,7 @@ function setupEventListeners() {
         manualJudgment: ''
       }
     };
+    
     ipcRenderer.invoke('update-task-data', taskData).then(() => {
       ipcRenderer.invoke('generate-conclusion', taskData.conclusions);
     });
@@ -141,21 +155,140 @@ function setupEventListeners() {
       renderChains();
     }
   });
+
+  toggleBatchBtn.addEventListener('click', () => {
+    const isHidden = batchArea.style.display === 'none';
+    batchArea.style.display = isHidden ? 'block' : 'none';
+    toggleBatchBtn.textContent = isHidden ? '收起' : '展开';
+  });
+
+  pasteBatchBtn.addEventListener('click', async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      batchInput.value = text;
+    } catch (err) {
+      console.log('粘贴失败', err);
+    }
+  });
+
+  clearBatchBtn.addEventListener('click', () => {
+    batchInput.value = '';
+  });
+
+  parseBatchBtn.addEventListener('click', () => {
+    const text = batchInput.value.trim();
+    if (!text) return;
+    parseBatchImport(text);
+    batchInput.value = '';
+  });
+}
+
+function parseBatchImport(text) {
+  const lines = text.split('\n');
+  const newArticles = [];
+  
+  if (text.includes('|')) {
+    lines.forEach(line => {
+      line = line.trim();
+      if (!line) return;
+      const parts = line.split('|');
+      const [url, title, source, publishTime, ...contentParts] = parts;
+      const contentStr = contentParts.join('|');
+      const paragraphs = contentStr ? contentStr.split('||').filter(p => p.trim()) : [];
+      
+      newArticles.push({
+        id: Date.now() + newArticles.length + Math.random(),
+        title: (title || '').trim(),
+        source: (source || '').trim(),
+        publishTime: (publishTime || '').trim(),
+        url: (url || '').trim(),
+        paragraphs: paragraphs,
+        images: [],
+        author: '',
+        sourceNote: '',
+        type: 'unknown',
+        similarity: 0,
+        needsEdit: !(title && publishTime)
+      });
+    });
+  } else {
+    const blocks = text.split(/\n\s*\n/).filter(b => b.trim());
+    blocks.forEach(block => {
+      const blockLines = block.split('\n').filter(l => l.trim());
+      if (blockLines.length === 0) return;
+      
+      let url = '';
+      let title = '';
+      let source = '';
+      let publishTime = '';
+      let paragraphs = [];
+      
+      const urlLine = blockLines.find(l => l.startsWith('http'));
+      if (urlLine) {
+        url = urlLine.trim();
+        blockLines.splice(blockLines.indexOf(urlLine), 1);
+      }
+      
+      const timeLine = blockLines.find(l => /\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(l) || /\d{1,2}:\d{2}(:\d{2})?/.test(l));
+      if (timeLine) {
+        const timeMatch = timeLine.match(/(\d{4}[-/]\d{1,2}[-/]\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2})?)|(\d{1,2}:\d{2}(:\d{2})?)/);
+        if (timeMatch) {
+          publishTime = timeMatch[0].replace(/\//g, '-').replace('T', ' ').trim();
+          if (!publishTime.includes('-')) {
+            const today = new Date();
+            publishTime = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')} ${publishTime}`;
+          }
+        }
+        blockLines.splice(blockLines.indexOf(timeLine), 1);
+      }
+      
+      if (blockLines.length > 0) {
+        title = blockLines[0].trim();
+        paragraphs = blockLines.slice(1).map(l => l.trim()).filter(l => l);
+      }
+      
+      newArticles.push({
+        id: Date.now() + newArticles.length + Math.random(),
+        title: title,
+        source: source,
+        publishTime: publishTime,
+        url: url,
+        paragraphs: paragraphs,
+        images: [],
+        author: '',
+        sourceNote: '',
+        type: 'unknown',
+        similarity: 0,
+        needsEdit: !(title && publishTime)
+      });
+    });
+  }
+  
+  newArticles.forEach(a => {
+    if (a.url && articles.find(ex => ex.url === a.url)) return;
+    articles.push(a);
+  });
+  
+  candidateChains = buildCandidateChains(articles);
+  renderChains();
+  updateMissingWarning();
+  updateTaskData();
 }
 
 function addUrls(urls) {
   urls.forEach((url) => {
     const existing = articles.find(a => a.url === url);
     if (!existing) {
-      const idx = articles.length;
       const article = {
-        id: Date.now() + idx,
+        id: Date.now() + Math.random(),
         title: '',
         source: '',
         publishTime: '',
         url: url,
         paragraphs: [],
         images: [],
+        author: '',
+        sourceNote: '',
         type: 'unknown',
         similarity: 0,
         needsEdit: true
@@ -166,6 +299,7 @@ function addUrls(urls) {
   
   candidateChains = buildCandidateChains(articles);
   renderChains();
+  updateMissingWarning();
   updateTaskData();
 }
 
@@ -201,16 +335,19 @@ function renderEditView() {
   });
 
   sorted.forEach(article => {
-    const isEmpty = !article.title && !article.source;
-    const borderClass = isEmpty ? 'border-color: #eb3349;' : 'border-color: #2d2d4a;';
+    const missingFields = [];
+    if (!article.title) missingFields.push('标题');
+    if (!article.publishTime) missingFields.push('发布时间');
+    const hasMissing = missingFields.length > 0;
+    const borderClass = hasMissing ? 'border-color: #eb3349;' : 'border-color: #2d2d4a;';
     
     html += `
       <div class="article-item" data-article-id="${article.id}" style="${borderClass} cursor: default;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <span style="font-size: 11px; color: #7c7c9a; word-break: break-all;">${article.url}</span>
+          <span style="font-size: 11px; color: #7c7c9a; word-break: break-all; flex: 1;">${article.url || '(无链接)'}</span>
           <button class="btn btn-danger btn-small delete-btn" data-article-id="${article.id}" style="flex-shrink: 0; margin-left: 8px;">删除</button>
         </div>
-        ${isEmpty ? '<div style="color: #eb3349; font-size: 11px; margin-bottom: 8px;">请补填以下信息后生成链路</div>' : ''}
+        ${hasMissing ? `<div style="color: #eb3349; font-size: 11px; margin-bottom: 8px;">⚠ 缺少：${missingFields.join('、')}</div>` : ''}
         <div class="input-group" style="margin-bottom: 6px;">
           <label>标题</label>
           <input type="text" class="edit-field" data-field="title" data-id="${article.id}" value="${escapeHtml(article.title)}" placeholder="请输入新闻标题">
@@ -225,6 +362,16 @@ function renderEditView() {
             <input type="datetime-local" class="edit-field" data-field="publishTime" data-id="${article.id}" value="${toDatetimeLocal(article.publishTime)}" step="1">
           </div>
         </div>
+        <div style="display: flex; gap: 8px; margin-bottom: 6px;">
+          <div class="input-group" style="flex: 1; margin-bottom: 0;">
+            <label>作者署名</label>
+            <input type="text" class="edit-field" data-field="author" data-id="${article.id}" value="${escapeHtml(article.author || '')}" placeholder="可选">
+          </div>
+          <div class="input-group" style="flex: 1; margin-bottom: 0;">
+            <label>来源说明</label>
+            <input type="text" class="edit-field" data-field="sourceNote" data-id="${article.id}" value="${escapeHtml(article.sourceNote || '')}" placeholder="转载自/引用">
+          </div>
+        </div>
         <div class="input-group" style="margin-bottom: 0;">
           <label>正文（每段一行）</label>
           <textarea class="edit-field" data-field="paragraphs" data-id="${article.id}" rows="3" placeholder="将正文按段落粘贴，每段一行">${article.paragraphs.map(p => escapeHtml(p)).join('\n')}</textarea>
@@ -236,9 +383,8 @@ function renderEditView() {
   chainList.innerHTML = html;
 
   chainList.querySelectorAll('.edit-field').forEach(field => {
-    const eventType = field.tagName === 'SELECT' ? 'change' : 'input';
-    field.addEventListener(eventType, (e) => {
-      const id = parseInt(field.dataset.id);
+    field.addEventListener('blur', () => {
+      const id = parseFloat(field.dataset.id);
       const fieldName = field.dataset.field;
       const article = articles.find(a => a.id === id);
       if (!article) return;
@@ -251,8 +397,9 @@ function renderEditView() {
         article[fieldName] = field.value;
       }
 
-      article.needsEdit = !article.title || !article.source;
+      article.needsEdit = !article.title || !article.publishTime;
       candidateChains = buildCandidateChains(articles);
+      updateMissingWarning();
       updateTaskData();
     });
   });
@@ -260,12 +407,13 @@ function renderEditView() {
   chainList.querySelectorAll('.delete-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const id = parseInt(btn.dataset.articleId);
+      const id = parseFloat(btn.dataset.articleId);
       articles = articles.filter(a => a.id !== id);
       selectedArticleIds.delete(id);
       candidateChains = buildCandidateChains(articles);
       renderChains();
       updateButtons();
+      updateMissingWarning();
       updateTaskData();
     });
   });
@@ -306,7 +454,7 @@ function renderChainView() {
   
   chainList.querySelectorAll('.chain-reprint').forEach(el => {
     el.addEventListener('click', (e) => {
-      const id = parseInt(el.dataset.articleId);
+      const id = parseFloat(el.dataset.articleId);
       if (selectedArticleIds.has(id)) {
         selectedArticleIds.delete(id);
         el.style.background = '';
@@ -330,16 +478,20 @@ function renderListView() {
     const isSelected = selectedArticleIds.has(article.id);
     const typeLabel = getTypeLabel(article.type);
     const sim = article.similarity ? `${article.similarity}%` : '-';
+    const missingFields = [];
+    if (!article.title) missingFields.push('标题');
+    if (!article.publishTime) missingFields.push('时间');
     
     html += `
-      <div class="article-item ${isSelected ? 'selected' : ''}" data-article-id="${article.id}">
+      <div class="article-item ${isSelected ? 'selected' : ''}" data-article-id="${article.id}" style="${missingFields.length ? 'border-color: #eb3349;' : ''}">
         <div class="title">${article.title || '(未填写标题)'}</div>
         <div class="meta">
           <span class="source">${article.source || '未知来源'} · ${article.publishTime ? formatTime(article.publishTime) : '未知时间'}</span>
           <span class="similarity">相似度 ${sim}</span>
         </div>
-        <div style="margin-top: 6px;">
+        <div style="margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap;">
           <span class="badge ${typeLabel.class}">${typeLabel.text}</span>
+          ${missingFields.length > 0 ? `<span class="badge badge-rewrite">缺${missingFields.join('/')}</span>` : ''}
         </div>
       </div>
     `;
@@ -349,7 +501,7 @@ function renderListView() {
   
   chainList.querySelectorAll('.article-item').forEach(el => {
     el.addEventListener('click', () => {
-      const id = parseInt(el.dataset.articleId);
+      const id = parseFloat(el.dataset.articleId);
       if (selectedArticleIds.has(id)) {
         selectedArticleIds.delete(id);
         el.classList.remove('selected');
@@ -360,6 +512,25 @@ function renderListView() {
       updateButtons();
     });
   });
+}
+
+function updateMissingWarning() {
+  const missing = articles.filter(a => !a.title || !a.publishTime);
+  const complete = articles.length - missing.length;
+  
+  if (missing.length > 0) {
+    const details = [];
+    missing.forEach(a => {
+      const missingFields = [];
+      if (!a.title) missingFields.push('标题');
+      if (!a.publishTime) missingFields.push('发布时间');
+      details.push(`${a.source || a.url?.slice(0, 20) || '稿件'}(缺${missingFields.join('/')})`);
+    });
+    missingWarning.style.display = 'block';
+    missingText.innerHTML = `共 ${articles.length} 篇稿件，${complete} 篇已补全，${missing.length} 篇待完善：<span style="color: #fff;">${details.slice(0, 3).join('；')}${details.length > 3 ? '...' : ''}</span>。已补全的稿件可直接进入结论。`;
+  } else {
+    missingWarning.style.display = 'none';
+  }
 }
 
 function getTypeLabel(type) {
@@ -384,7 +555,9 @@ function toDatetimeLocal(timeStr) {
   if (!timeStr) return '';
   const d = new Date(timeStr);
   if (isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 16);
+  const tzOffset = d.getTimezoneOffset() * 60000;
+  const local = new Date(d.getTime() - tzOffset);
+  return local.toISOString().slice(0, 16);
 }
 
 function escapeHtml(str) {
@@ -418,6 +591,7 @@ function loadTaskData() {
       keywordsInput.value = data.keywords || '';
       renderChains();
       updateButtons();
+      updateMissingWarning();
     }
   });
 }
@@ -427,6 +601,7 @@ ipcRenderer.on('task-data-updated', (event, data) => {
   candidateChains = data.candidateChains || [];
   renderChains();
   updateButtons();
+  updateMissingWarning();
 });
 
 init();

@@ -13,6 +13,25 @@
       核查结论
     </div>
 
+    <div class="timeline-section">
+      <div class="conclusion-label">
+        <span class="icon">⏱</span>
+        传播时间线（点击节点右侧切换类型）
+      </div>
+      <div class="timeline-legend">
+        <div class="legend-item"><span class="legend-dot source"></span>源头</div>
+        <div class="legend-item"><span class="legend-dot keymedia"></span>关键扩散</div>
+        <div class="legend-item"><span class="legend-dot uncertain"></span>不确定</div>
+        <div class="legend-item"><span class="legend-dot normal"></span>普通</div>
+      </div>
+      <div class="timeline-container" id="timelineContainer">
+        <span style="color: #5c5c7a; font-size: 12px; display: block; padding: 20px; text-align: center;">暂无稿件数据</span>
+      </div>
+      <div class="timeline-hint">
+        💡 每个节点右侧的 ◉ 按钮可循环切换类型：普通 → 源头 → 关键扩散 → 不确定 → 普通
+      </div>
+    </div>
+
     <div class="conclusion-section">
       <div class="conclusion-label">
         <span class="icon">1</span>
@@ -46,15 +65,15 @@
     <div class="conclusion-section">
       <div class="conclusion-label">
         <span class="icon">4</span>
-        人工判断（一句话）
+        人工判断补充（选填，传播路径已自动生成）
       </div>
-      <textarea class="conclusion-textarea" id="judgmentInput" placeholder="例如：该事件由每日经济首发，经科技资讯直接转载后扩散，新闻晨报属二次报道..."></textarea>
+      <textarea class="conclusion-textarea" id="judgmentInput" placeholder="选填：补充说明特殊情况、处理建议、交班提示等..."></textarea>
     </div>
 
     <div class="conclusion-section" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
       <div class="conclusion-label">
         <span class="icon">📋</span>
-        结论预览
+        结论预览（含自动传播路径）
         <button class="btn btn-secondary btn-small" id="copyBtn" style="margin-left: auto;">复制</button>
       </div>
       <div class="report-box" id="reportBox">

@@ -198,40 +198,95 @@ function updateComparison() {
   renderDiffContent(diff);
 }
 
+function extractSourceContext(article) {
+  const tags = [];
+  const paraTags = {};
+
+  const reprintPatterns = [
+    { regex: /转载自[：: ]*([^\s，,。；;]+)/g, type: 'reprint', label: '转载自' },
+    { regex: /引用自[：: ]*([^\s，,。；;]+)/g, type: 'quote', label: '引用自' },
+    { regex: /来源[：: ]*([^\s，,。；;]+)/g, type: 'quote', label: '来源' },
+    { regex: /[据从][ ]*([^\s，,。；;]+)[ ]*(报道|消息|获悉)/g, type: 'quote', label: '据' },
+    { regex: /([^\s，,。；;]+)[ ]*(讯)/g, type: 'quote', label: '' }
+  ];
+
+  if (article.sourceNote) {
+    tags.push({ type: 'source-note', label: '来源说明', name: article.sourceNote });
+  }
+  if (article.author) {
+    tags.push({ type: 'source-note', label: '署名', name: article.author });
+  }
+
+  const seenNames = new Set();
+  (article.paragraphs || []).forEach((para, idx) => {
+    paraTags[idx] = [];
+    reprintPatterns.forEach(p => {
+      const matches = [...para.matchAll(p.regex)];
+      matches.forEach(m => {
+        if (m[1]) {
+          const cleanName = m[1].replace(/[《》""'']/g, '');
+          paraTags[idx].push({ type: p.type, name: cleanName, label: p.label });
+          const key = `${p.type}|${cleanName}`;
+          if (!seenNames.has(key)) {
+            seenNames.add(key);
+            tags.push({ type: p.type, label: p.label || '引用', name: cleanName });
+          }
+        }
+      });
+    });
+  });
+
+  return { tags, paraTags };
+}
+
+function renderSourceTags(ctx) {
+  if (!ctx.tags || ctx.tags.length === 0) return '';
+  const html = ctx.tags.map(t => `
+    <span class="source-tag ${t.type}">
+      <span class="type">${t.label}</span>
+      <span class="name">${t.name}</span>
+    </span>
+  `).join('');
+  return `<div class="source-tags">${html}</div>`;
+}
+
+function decoratePara(content, paraTagList) {
+  if (!paraTagList || paraTagList.length === 0) return content;
+  const tagHtml = paraTagList.map(t => `<span class="para-source-tag ${t.type}">${t.label}${t.name}</span>`).join('');
+  return content + tagHtml;
+}
+
 function renderDiffContent(diff) {
+  const leftCtx = extractSourceContext(leftArticle);
+  const rightCtx = extractSourceContext(rightArticle);
   const leftHtml = [];
   const rightHtml = [];
 
-  const maxLen = Math.max(
-    leftArticle.paragraphs.length,
-    rightArticle.paragraphs.length
-  );
-
-  let leftIdx = 0;
-  let rightIdx = 0;
-
   diff.paragraphs.same.forEach(item => {
-    leftHtml.push(`<p class="same">${highlightDiff(item.content1, item.content2, 'left')}</p>`);
-    rightHtml.push(`<p class="same">${highlightDiff(item.content1, item.content2, 'right')}</p>`);
+    leftHtml.push(`<p class="same">${decoratePara(highlightDiff(item.content1, item.content2, 'left'), leftCtx.paraTags[item.index])}</p>`);
+    rightHtml.push(`<p class="same">${decoratePara(highlightDiff(item.content1, item.content2, 'right'), rightCtx.paraTags[item.index])}</p>`);
   });
 
   diff.paragraphs.modified.forEach(item => {
-    leftHtml.push(`<p class="modified">${item.content1}</p>`);
-    rightHtml.push(`<p class="modified">${item.content2}</p>`);
+    leftHtml.push(`<p class="modified">${decoratePara(item.content1, leftCtx.paraTags[item.index])}</p>`);
+    rightHtml.push(`<p class="modified">${decoratePara(item.content2, rightCtx.paraTags[item.index])}</p>`);
   });
 
   diff.paragraphs.removed.forEach(item => {
-    leftHtml.push(`<p class="removed">${item.content}</p>`);
+    leftHtml.push(`<p class="removed">${decoratePara(item.content, leftCtx.paraTags[item.index])}</p>`);
     rightHtml.push(`<p class="removed" style="visibility: hidden;">&nbsp;</p>`);
   });
 
   diff.paragraphs.added.forEach(item => {
     leftHtml.push(`<p class="added" style="visibility: hidden;">&nbsp;</p>`);
-    rightHtml.push(`<p class="added">${item.content}</p>`);
+    rightHtml.push(`<p class="added">${decoratePara(item.content, rightCtx.paraTags[item.index])}</p>`);
   });
 
-  leftContent.innerHTML = `<h3 style="font-size: 15px; margin-bottom: 12px; color: #fff; line-height: 1.5;">${leftArticle.title}</h3>` + leftHtml.join('');
-  rightContent.innerHTML = `<h3 style="font-size: 15px; margin-bottom: 12px; color: #fff; line-height: 1.5;">${rightArticle.title}</h3>` + rightHtml.join('');
+  const leftTitleHtml = `<h3 style="font-size: 15px; margin-bottom: 12px; color: #fff; line-height: 1.5;">${leftArticle.title}</h3>` + renderSourceTags(leftCtx);
+  const rightTitleHtml = `<h3 style="font-size: 15px; margin-bottom: 12px; color: #fff; line-height: 1.5;">${rightArticle.title}</h3>` + renderSourceTags(rightCtx);
+
+  leftContent.innerHTML = leftTitleHtml + leftHtml.join('');
+  rightContent.innerHTML = rightTitleHtml + rightHtml.join('');
 }
 
 function highlightDiff(text1, text2, side) {
